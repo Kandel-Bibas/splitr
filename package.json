@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "db:migrate:local": "wrangler d1 migrations apply splitr --local",
-    "check:orders": "vitest run --config vitest.parity.config.ts"
+    "check:orders": "vitest run --config vitest.parity.config.ts",
+    "test:db": "vitest run --config vitest.db.config.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter-tight": "^5.3.0",
@@ -23,6 +24,8 @@
     "@tanstack/react-router": "^1.170.45",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.13",
+    "jose": "^6.2.12",
+    "postgres": "^3.4.9",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-plaid-link": "^4.2.0",
