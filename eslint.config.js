@@ -13,4 +13,8 @@ export default defineConfig([
     files: ["**/*.{ts,tsx}"],
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
+  {
+    files: ["extension/**/*.js"],
+    languageOptions: { globals: { ...globals.browser, ...globals.webextensions } },
+  },
 ]);

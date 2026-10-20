@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
-    "db:migrate:local": "wrangler d1 migrations apply splitr --local"
+    "db:migrate:local": "wrangler d1 migrations apply splitr --local",
+    "check:orders": "vitest run --config vitest.parity.config.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter-tight": "^5.3.0",
@@ -38,6 +39,7 @@
     "eslint": "^9",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.13.0",
+    "happy-dom": "^21.0.3",
     "tailwindcss": "^4",
     "typescript": "^5",
     "typescript-eslint": "^8.71.2",

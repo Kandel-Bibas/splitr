@@ -16,6 +16,8 @@ import { SaveBar } from "@/components/SaveBar";
 import { Section } from "@/components/ui/Section";
 import { toCents, formatUSD } from "@/lib/money";
 import { splitItemized } from "@/lib/split";
+import { asCapture, importOrder, type ImportedOrder } from "@/lib/order-import";
+import { takeCapture } from "../order-handoff";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,12 +48,49 @@ function makeRow(assigneeIds: string[] = []): ItemRow {
   };
 }
 
+/** An order the extension sent whose capture couldn't be read; keeps the capture for download */
+class UnreadableCapture extends Error {
+  constructor(message: string, readonly capture: unknown) {
+    super(message);
+  }
+}
+
+/** Reads the captured order, and the id of the split already made from it (if any) */
+async function readOrder(token: string): Promise<{ order: ImportedOrder; existingId: string | null }> {
+  const capture = await takeCapture(token);
+  let order: ImportedOrder;
+  try {
+    order = importOrder(asCapture(capture));
+  } catch (err) {
+    throw new UnreadableCapture(err instanceof Error ? err.message : "Couldn't read this order.", capture);
+  }
+  const res = await fetch(`/api/expenses/by-order/${encodeURIComponent(order.ref)}`);
+  if (res.status === 404) return { order, existingId: null };
+  if (!res.ok) throw new Error(`Couldn't check whether this order is already split (error ${res.status}).`);
+  const { id } = (await res.json()) as { id: string };
+  return { order, existingId: id };
+}
+
+function downloadJson(value: unknown) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `order-capture-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** The parts of GET /api/expenses/[id] this form needs when editing */
 interface SavedExpense {
   type: "ITEMIZED" | "SIMPLE";
   store: string | null;
   purchasedAt: string | null;
   taxCents: number;
+  tipFeesCents: number;
+  discountCents: number;
+  refundCents: number;
+  orderRef: string | null;
   payerId: string;
   tags: string[];
   items: {
@@ -60,6 +99,7 @@ interface SavedExpense {
     quantity: number;
     unitPriceCents: number;
     lineTotalCents: number;
+    returned: boolean;
     assignments: { personId: string }[];
   }[];
 }
@@ -73,6 +113,7 @@ function savedItemToRow(it: SavedExpense["items"][number]): ItemRow {
     unitPrice: (it.unitPriceCents / 100).toFixed(2),
     lineTotal: (it.lineTotalCents / 100).toFixed(2),
     assigneeIds: it.assignments.map((a) => a.personId),
+    returned: it.returned,
   };
 }
 
@@ -82,12 +123,21 @@ function savedItemToRow(it: SavedExpense["items"][number]): ItemRow {
 
 export default function NewItemizedPage() {
   // ?edit=<id> opens this form pre-filled to edit a saved expense;
-  // ?fromTx=<id> pre-fills it from a charge in Money and links the two
-  const { edit: editId, fromTx } = useQueryString<{ edit?: string; fromTx?: string }>();
+  // ?fromTx=<id> pre-fills it from a charge in Money and links the two;
+  // ?import=<token> pre-fills it from a Walmart / Sam's Club order sent by the extension
+  const { edit: editId, fromTx, import: importParam } = useQueryString<{
+    edit?: string;
+    fromTx?: string;
+    import?: string;
+  }>();
+  const importToken = editId ? undefined : importParam;
   const goTo = useGoTo();
   const refreshAll = useRefreshAll();
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
   const [sourceTx, setSourceTx] = useState<TxView | null>(null);
+  const [existingOrderId, setExistingOrderId] = useState<string | null>(null);
+  // Set when an imported capture couldn't be read, so it can be downloaded
+  const [unreadable, setUnreadable] = useState<{ capture: unknown } | null>(null);
 
   // People
   const [people, setPeople] = useState<Person[]>([]);
@@ -98,6 +148,11 @@ export default function NewItemizedPage() {
   const [tags, setTags] = useState<string[]>([]);
   const [purchasedAt, setPurchasedAt] = useState("");
   const [taxDollars, setTaxDollars] = useState("0.00");
+  // Order charges from an import: shown read-only, saved unchanged
+  const [tipFeesCents, setTipFeesCents] = useState(0);
+  const [discountCents, setDiscountCents] = useState(0);
+  const [refundCents, setRefundCents] = useState(0);
+  const [orderRef, setOrderRef] = useState<string | null>(null);
   const [rows, setRows] = useState<ItemRow[]>([]);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
 
@@ -117,8 +172,9 @@ export default function NewItemizedPage() {
       queryClient.fetchQuery(peopleQuery),
       editId ? loadExpenseToEdit<SavedExpense>(editId) : null,
       fromTx && !editId ? loadSourceTx(fromTx) : null,
+      importToken ? readOrder(importToken) : null,
     ])
-      .then(([data, saved, tx]) => {
+      .then(([data, saved, tx, imported]) => {
         setPeople(data);
         if (saved) {
           const active = new Set(data.map((p) => p.id));
@@ -134,8 +190,43 @@ export default function NewItemizedPage() {
           setTags(saved.tags);
           setPurchasedAt(saved.purchasedAt ? saved.purchasedAt.slice(0, 10) : "");
           setTaxDollars((saved.taxCents / 100).toFixed(2));
+          setTipFeesCents(saved.tipFeesCents);
+          setDiscountCents(saved.discountCents);
+          setRefundCents(saved.refundCents);
+          setOrderRef(saved.orderRef);
           setRows(saved.items.map(savedItemToRow));
           setPayerId(saved.payerId);
+          return;
+        }
+        if (imported) {
+          const { order, existingId } = imported;
+          if (existingId) {
+            setExistingOrderId(existingId);
+            throw new Error("This order is already split");
+          }
+          const assigneeIds = data.filter((p) => p.isDefault).map((p) => p.id);
+          setStore(order.store);
+          setPurchasedAt(order.date ?? "");
+          setTaxDollars((order.taxCents / 100).toFixed(2));
+          setTipFeesCents(order.tipFeesCents);
+          setDiscountCents(order.discountCents);
+          setRefundCents(order.refundCents);
+          setOrderRef(order.ref);
+          setRows(
+            order.items.map((item) => ({
+              id: crypto.randomUUID(),
+              rawName: null,
+              name: item.weight ? `${item.name} · ${item.weight}` : item.name,
+              quantity: String(item.quantity),
+              unitPrice: (item.lineTotalCents / item.quantity / 100).toFixed(2),
+              lineTotal: (item.lineTotalCents / 100).toFixed(2),
+              assigneeIds,
+              returned: item.returned,
+            }))
+          );
+          // Your own Walmart account paid
+          const payer = data.find((p) => p.isMe) || data.find((p) => p.isDefault) || data[0];
+          if (payer) setPayerId(payer.id);
           return;
         }
         if (tx) {
@@ -150,12 +241,15 @@ export default function NewItemizedPage() {
         setRows([makeRow(data.filter((p) => p.isDefault || (tx && p.isMe)).map((p) => p.id))]);
       })
       .catch((err) => {
-        if (editId || fromTx) {
-          setEditLoadError(err instanceof Error ? err.message : "Couldn't load the expense.");
+        if (err instanceof UnreadableCapture) setUnreadable({ capture: err.capture });
+        if (editId || fromTx || importToken) {
+          setEditLoadError(
+            err instanceof Error ? err.message : importToken ? "Couldn't read this order." : "Couldn't load the expense."
+          );
         }
       })
       .finally(() => setPeopleLoading(false));
-  }, [editId, fromTx]);
+  }, [editId, fromTx, importToken]);
 
   // Derived: IDs of default (roommate) people — used as initial assignees.
   // On your own charge you're in on every item too, unless you untick yourself.
@@ -269,6 +363,10 @@ export default function NewItemizedPage() {
       payerId,
       ...(sourceTx && { transactionId: sourceTx.id }),
       taxCents: toCents(parseFloat(taxDollars) || 0),
+      tipFeesCents,
+      discountCents,
+      refundCents,
+      ...(!editId && orderRef ? { orderRef } : {}),
       items: rows.map((row) => ({
         name: row.name.trim() || "Item",
         ...(row.rawName ? { rawName: row.rawName } : {}),
@@ -276,6 +374,7 @@ export default function NewItemizedPage() {
         unitPriceCents: toCents(parseFloat(row.unitPrice) || 0),
         lineTotalCents: toCents(parseFloat(row.lineTotal) || 0),
         assigneeIds: row.assigneeIds,
+        returned: !!row.returned,
       })),
     };
 
@@ -293,10 +392,13 @@ export default function NewItemizedPage() {
         return;
       }
 
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as { error?: string }).error ?? `Server error ${res.status}`
-      );
+      const body = (await res.json().catch(() => ({}))) as { error?: string; id?: string };
+      if (res.status === 409 && body.id) {
+        toast.error(body.error ?? "This order is already split.");
+        goTo(`/expenses/${body.id}`);
+        return;
+      }
+      throw new Error(body.error ?? `Server error ${res.status}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Save failed. Try again.");
     } finally {
@@ -316,8 +418,12 @@ export default function NewItemizedPage() {
           id: r.id,
           lineTotalCents: toCents(parseFloat(r.lineTotal) || 0),
           assigneeIds: r.assigneeIds,
+          returned: r.returned,
         })),
         taxCents: toCents(parseFloat(taxDollars) || 0),
+        tipFeesCents,
+        discountCents,
+        refundCents,
       });
       const payerPerson = people.find((p) => p.id === payerId);
       const storeName = store.trim() || "Receipt";
@@ -349,9 +455,29 @@ export default function NewItemizedPage() {
         >
           {editLoadError}
         </p>
-        <Link href={editId ? `/expenses/${editId}` : fromTx ? `/transactions/${fromTx}` : "/splits"}>
-          <Button variant="secondary">{editId ? "Back to expense" : "Back"}</Button>
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          {existingOrderId && (
+            <Link href={`/expenses/${existingOrderId}`}>
+              <Button variant="primary">View the split</Button>
+            </Link>
+          )}
+          {unreadable && (
+            <Button variant="secondary" onClick={() => downloadJson(unreadable.capture)}>
+              Download capture
+            </Button>
+          )}
+          <Link href={editId ? `/expenses/${editId}` : fromTx ? `/transactions/${fromTx}` : importToken ? "/expenses/new" : "/splits"}>
+            <Button variant="secondary">{editId ? "Back to expense" : "Back"}</Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (importToken && peopleLoading) {
+    return (
+      <div className="py-16 text-center">
+        <p className="text-sm text-ink-faint">Reading your order…</p>
       </div>
     );
   }
@@ -369,7 +495,10 @@ export default function NewItemizedPage() {
 
   const itemsTotalCents =
     rows.reduce((sum, r) => sum + toCents(parseFloat(r.lineTotal) || 0), 0) +
-    toCents(parseFloat(taxDollars) || 0);
+    toCents(parseFloat(taxDollars) || 0) +
+    tipFeesCents +
+    discountCents +
+    refundCents;
 
   return (
     <div className="space-y-9">
@@ -444,6 +573,11 @@ export default function NewItemizedPage() {
           selectedRowIds={selectedRowIds}
           taxDollars={taxDollars}
           onTaxChange={setTaxDollars}
+          charges={[
+            { label: "Tip & fees", cents: tipFeesCents },
+            { label: "Discounts", cents: discountCents },
+            { label: "Refunds", cents: refundCents },
+          ]}
           onRowChange={handleRowChange}
           onDeleteRow={handleDeleteRow}
           onAddRow={handleAddRow}
@@ -458,8 +592,12 @@ export default function NewItemizedPage() {
           id: r.id,
           lineTotal: r.lineTotal,
           assigneeIds: r.assigneeIds,
+          returned: r.returned,
         }))}
         taxDollars={taxDollars}
+        tipFeesCents={tipFeesCents}
+        discountCents={discountCents}
+        refundCents={refundCents}
         people={people}
         payerId={payerId}
       />

@@ -1,8 +1,8 @@
 import { relations } from 'drizzle-orm'
 import { customType, integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
-// Mirrors the tables in prisma/migrations/0001_init.sql, which were first
-// created by Prisma; names and column types must keep matching them.
+// Mirrors the tables in migrations/ (0001_init.sql was first created by
+// Prisma); names and column types must keep matching them.
 
 /**
  * DATETIME columns hold ISO text. Rows written by different tools use either
@@ -43,6 +43,10 @@ export const expense = sqliteTable('Expense', {
   payerId: text('payerId').notNull(),
   subtotalCents: integer('subtotalCents').notNull().default(0),
   taxCents: integer('taxCents').notNull().default(0),
+  // Itemized only: driver tip + fees (>= 0), discounts (<= 0), refunds (<= 0)
+  tipFeesCents: integer('tipFeesCents').notNull().default(0),
+  discountCents: integer('discountCents').notNull().default(0),
+  refundCents: integer('refundCents').notNull().default(0),
   totalCents: integer('totalCents').notNull(),
   splitMethod: text('splitMethod', { enum: ['EVEN', 'EXACT', 'ITEMIZED'] }).notNull(),
   loggedToSplitwise: bool('loggedToSplitwise').notNull().default(false),
@@ -50,6 +54,8 @@ export const expense = sqliteTable('Expense', {
   createdAt: dateTime('createdAt').notNull().$defaultFn(now),
   // The bank or hand-added transaction this split was made from, if any
   transactionId: integer('transactionId'),
+  // The online order it was imported from ("walmart-<id>"); unique
+  orderRef: text('orderRef'),
 })
 
 export const tag = sqliteTable('Tag', {
@@ -72,6 +78,7 @@ export const item = sqliteTable('Item', {
   unitPriceCents: integer('unitPriceCents').notNull(),
   lineTotalCents: integer('lineTotalCents').notNull(),
   sortOrder: integer('sortOrder').notNull(),
+  returned: bool('returned').notNull().default(false),
 })
 
 export const itemAssignment = sqliteTable(

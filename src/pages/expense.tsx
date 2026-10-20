@@ -38,11 +38,15 @@ interface Expense {
   createdAt: string;
   splitMethod: "EVEN" | "EXACT" | "ITEMIZED";
   taxCents: number;
+  tipFeesCents: number;
+  discountCents: number;
+  refundCents: number;
   items: {
     id: string;
     name: string;
     quantity: number;
     lineTotalCents: number;
+    returned: boolean;
     assignments: { personId: string }[];
   }[];
   tags: string[];
@@ -382,6 +386,7 @@ export default function ExpenseDetailPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold truncate">
                     {item.name}
+                    {item.returned && <span className="font-normal text-ink-muted"> · Returned</span>}
                     {item.quantity !== 1 && (
                       <span className="font-normal text-ink-muted"> × {item.quantity}</span>
                     )}
@@ -404,6 +409,18 @@ export default function ExpenseDetailPage() {
                 <span className="text-sm tabular-nums">{formatUSD(expense.taxCents)}</span>
               </li>
             )}
+            {[
+              { label: "Tip & fees", cents: expense.tipFeesCents },
+              { label: "Discounts", cents: expense.discountCents },
+              { label: "Refunds", cents: expense.refundCents },
+            ]
+              .filter((c) => c.cents !== 0)
+              .map((c) => (
+                <li key={c.label} className="flex items-center gap-3 px-5 py-3 bg-mist">
+                  <p className="flex-1 text-sm text-ink-muted">{c.label}</p>
+                  <span className="text-sm tabular-nums">{formatUSD(c.cents)}</span>
+                </li>
+              ))}
           </ul>
         </section>
       )}

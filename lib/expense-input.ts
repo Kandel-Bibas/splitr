@@ -11,6 +11,7 @@ interface ItemInput {
   unitPriceCents: number
   lineTotalCents: number
   assigneeIds: string[]
+  returned: boolean
 }
 
 export type ExpenseInput =
@@ -20,6 +21,9 @@ export type ExpenseInput =
       store: string | null
       purchasedAt: Date | null
       taxCents: number
+      tipFeesCents: number
+      discountCents: number
+      refundCents: number
       totalCents: number
       tags: string[]
       items: ItemInput[]
@@ -52,6 +56,15 @@ export function parseExpenseInput(body: any): { input: ExpenseInput } | { error:
     if (!payerId || typeof payerId !== 'string') return { error: 'payerId is required' }
     if (!Array.isArray(items) || items.length === 0) return { error: 'items must be a non-empty array' }
     if (typeof taxCents !== 'number') return { error: 'taxCents is required' }
+    const tipFeesCents = optionalCents(body.tipFeesCents)
+    const discountCents = optionalCents(body.discountCents)
+    const refundCents = optionalCents(body.refundCents)
+    if (tipFeesCents === null) return { error: 'tipFeesCents must be whole cents' }
+    if (discountCents === null) return { error: 'discountCents must be whole cents' }
+    if (refundCents === null) return { error: 'refundCents must be whole cents' }
+    if (items.some(it => it?.returned !== undefined && typeof it.returned !== 'boolean')) {
+      return { error: 'items[].returned must be a boolean' }
+    }
 
     const cleanItems: ItemInput[] = items.map(it => ({
       name: it.name,
@@ -60,18 +73,24 @@ export function parseExpenseInput(body: any): { input: ExpenseInput } | { error:
       unitPriceCents: it.unitPriceCents,
       lineTotalCents: it.lineTotalCents,
       assigneeIds: it.assigneeIds ?? [],
+      returned: it.returned ?? false,
     }))
-    const totalCents = cleanItems.reduce((s, i) => s + (i.lineTotalCents ?? 0), 0) + taxCents
+    const totalCents = cleanItems.reduce((s, i) => s + (i.lineTotalCents ?? 0), 0)
+      + taxCents + tipFeesCents + discountCents + refundCents
 
     const error = splitError({
       type: 'ITEMIZED',
       splitMethod: 'ITEMIZED',
       payerId,
       taxCents,
+      tipFeesCents,
+      discountCents,
+      refundCents,
       totalCents,
       items: cleanItems.map((it, idx) => ({
         id: String(idx),
         lineTotalCents: it.lineTotalCents,
+        returned: it.returned,
         assignments: it.assigneeIds.map(pid => ({ personId: pid })),
       })),
       participants: [],
@@ -85,6 +104,9 @@ export function parseExpenseInput(body: any): { input: ExpenseInput } | { error:
         store: store ?? null,
         purchasedAt,
         taxCents,
+        tipFeesCents,
+        discountCents,
+        refundCents,
         totalCents,
         tags,
         items: cleanItems,
@@ -112,6 +134,9 @@ export function parseExpenseInput(body: any): { input: ExpenseInput } | { error:
       splitMethod,
       payerId,
       taxCents: 0,
+      tipFeesCents: 0,
+      discountCents: 0,
+      refundCents: 0,
       totalCents,
       items: [],
       participants: cleanParticipants,
@@ -133,6 +158,12 @@ export function parseExpenseInput(body: any): { input: ExpenseInput } | { error:
   }
 
   return { error: 'type must be ITEMIZED or SIMPLE' }
+}
+
+/** Missing = 0; whole cents = the value; anything else = null (invalid). Signs are checked by the split. */
+function optionalCents(value: unknown): number | null {
+  if (value === undefined) return 0
+  return Number.isInteger(value) ? (value as number) : null
 }
 
 /** Blank = no date (null); a valid date string = Date; anything else = undefined (invalid). */
@@ -160,8 +191,11 @@ export function expenseFields(input: ExpenseInput) {
       type: 'ITEMIZED' as const,
       splitMethod: 'ITEMIZED' as const,
       payerId: input.payerId,
-      subtotalCents: input.totalCents - input.taxCents,
+      subtotalCents: input.items.reduce((s, i) => s + i.lineTotalCents, 0),
       taxCents: input.taxCents,
+      tipFeesCents: input.tipFeesCents,
+      discountCents: input.discountCents,
+      refundCents: input.refundCents,
       totalCents: input.totalCents,
       store: input.store,
       purchasedAt: input.purchasedAt,
@@ -175,6 +209,9 @@ export function expenseFields(input: ExpenseInput) {
     payerId: input.payerId,
     subtotalCents: input.totalCents,
     taxCents: 0,
+    tipFeesCents: 0,
+    discountCents: 0,
+    refundCents: 0,
     totalCents: input.totalCents,
   }
 }

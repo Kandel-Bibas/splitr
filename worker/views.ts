@@ -38,8 +38,11 @@ type BreakdownSource = {
   splitMethod: 'EVEN' | 'EXACT' | 'ITEMIZED'
   payerId: string
   taxCents: number
+  tipFeesCents: number
+  discountCents: number
+  refundCents: number
   totalCents: number
-  items: { id: string; lineTotalCents: number; assignments: { personId: string }[] }[]
+  items: { id: string; lineTotalCents: number; returned: boolean; assignments: { personId: string }[] }[]
   participants: { personId: string; exactAmountCents: number | null }[]
 }
 
@@ -49,10 +52,14 @@ export function breakdownOf(e: BreakdownSource): Breakdown {
     splitMethod: e.splitMethod,
     payerId: e.payerId,
     taxCents: e.taxCents,
+    tipFeesCents: e.tipFeesCents,
+    discountCents: e.discountCents,
+    refundCents: e.refundCents,
     totalCents: e.totalCents,
     items: e.items.map((i) => ({
       id: i.id,
       lineTotalCents: i.lineTotalCents,
+      returned: i.returned,
       assignments: i.assignments.map((a) => ({ personId: a.personId })),
     })),
     participants: e.participants.map((p) => ({ personId: p.personId, exactAmountCents: p.exactAmountCents })),

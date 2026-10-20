@@ -14,7 +14,7 @@ import {
   tag,
 } from '../db/schema'
 import { EXPENSE_WITH, breakdownOf, expenseJson, findExpense } from '../views'
-import { readJson } from '../http'
+import { isUniqueViolation, readJson } from '../http'
 
 export const expenses = new Hono<AppEnv>()
 
@@ -45,6 +45,7 @@ function childWrites(db: Db, expenseId: string, input: ExpenseInput, tagIds: str
           unitPriceCents: it.unitPriceCents,
           lineTotalCents: it.lineTotalCents,
           sortOrder: idx,
+          returned: it.returned,
         }),
       )
       if (it.assigneeIds.length > 0) {
@@ -60,6 +61,12 @@ function childWrites(db: Db, expenseId: string, input: ExpenseInput, tagIds: str
   }
   if (tagIds.length > 0) writes.push(db.insert(expenseToTag).values(tagIds.map((B) => ({ A: expenseId, B }))))
   return writes
+}
+
+const ORDER_REF = /^(walmart|samsclub)-\d+$/
+
+function findByOrder(db: Db, orderRef: string) {
+  return db.query.expense.findFirst({ where: (e, { eq }) => eq(e.orderRef, orderRef), columns: { id: true } })
 }
 
 /** The split's items and sharers, for its breakdown. */
@@ -98,15 +105,34 @@ expenses.post('/', async (c) => {
     if (source.expense) return c.json({ error: 'That transaction is already split' }, 409)
   }
 
+  // Optional: the Walmart or Sam's Club order this split was imported from
+  const { orderRef } = (body ?? {}) as { orderRef?: unknown }
+  if (orderRef !== undefined) {
+    if (input.type !== 'ITEMIZED') return c.json({ error: 'orderRef is only for itemized splits' }, 400)
+    if (typeof orderRef !== 'string' || !ORDER_REF.test(orderRef)) {
+      return c.json({ error: 'orderRef must look like walmart-<order id> or samsclub-<order id>' }, 400)
+    }
+    const existing = await findByOrder(db, orderRef)
+    if (existing) return c.json({ error: 'That order is already split', id: existing.id }, 409)
+  }
+
   const id = crypto.randomUUID()
-  await db.batch([
-    db.insert(expense).values({
-      id,
-      ...expenseFields(input),
-      ...(transactionId !== undefined && { transactionId: transactionId as number }),
-    }),
-    ...childWrites(db, id, input, tags.map((t) => t.id)),
-  ])
+  try {
+    await db.batch([
+      db.insert(expense).values({
+        id,
+        ...expenseFields(input),
+        ...(transactionId !== undefined && { transactionId: transactionId as number }),
+        ...(orderRef !== undefined && { orderRef: orderRef as string }),
+      }),
+      ...childWrites(db, id, input, tags.map((t) => t.id)),
+    ])
+  } catch (e) {
+    // Two saves of the same order at once: the unique index stops the second
+    if (orderRef === undefined || !isUniqueViolation(e)) throw e
+    const existing = await findByOrder(db, orderRef as string)
+    return c.json({ error: 'That order is already split', id: existing?.id }, 409)
+  }
 
   const saved = (await findForBreakdown(db, id))!
   return c.json({ id, breakdown: breakdownOf(saved) }, 201)
@@ -183,6 +209,15 @@ expenses.post('/bulk', async (c) => {
   }
 
   return c.json({ updated: ids.length })
+})
+
+// ---------------------------------------------------------------------------
+// GET /api/expenses/by-order/:ref  — the split made from this order, if any
+// ---------------------------------------------------------------------------
+expenses.get('/by-order/:ref', async (c) => {
+  const found = await findByOrder(getDb(c.env.DB), c.req.param('ref'))
+  if (!found) return c.json({ error: 'No split for that order' }, 404)
+  return c.json({ id: found.id })
 })
 
 // ---------------------------------------------------------------------------

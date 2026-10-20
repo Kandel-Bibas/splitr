@@ -7,6 +7,7 @@ export interface BreakdownItem {
   /** Dollar amount as a string (e.g. "5.99") */
   lineTotal: string;
   assigneeIds: string[];
+  returned?: boolean;
 }
 
 interface Person {
@@ -18,6 +19,9 @@ interface BreakdownCardProps {
   items: BreakdownItem[];
   /** Tax in dollars as a string (e.g. "4.23") */
   taxDollars: string;
+  tipFeesCents?: number;
+  discountCents?: number;
+  refundCents?: number;
   people: Person[];
   payerId: string;
 }
@@ -29,6 +33,9 @@ interface BreakdownCardProps {
 export function BreakdownCard({
   items,
   taxDollars,
+  tipFeesCents,
+  discountCents,
+  refundCents,
   people,
   payerId,
 }: BreakdownCardProps) {
@@ -37,23 +44,33 @@ export function BreakdownCard({
     [people]
   );
 
-  const result = useMemo(() => {
+  const { result, splitError } = useMemo(() => {
     const taxCents = toCents(parseFloat(taxDollars) || 0);
     const unassigned = items.filter((it) => it.assigneeIds.length === 0);
-    if (items.length === 0 || unassigned.length > 0) return null;
+    if (items.length === 0 || unassigned.length > 0) return { result: null, splitError: null };
     try {
-      return splitItemized({
-        items: items.map((it) => ({
-          id: it.id,
-          lineTotalCents: toCents(parseFloat(it.lineTotal) || 0),
-          assigneeIds: it.assigneeIds,
-        })),
-        taxCents,
-      });
-    } catch {
-      return null;
+      return {
+        result: splitItemized({
+          items: items.map((it) => ({
+            id: it.id,
+            lineTotalCents: toCents(parseFloat(it.lineTotal) || 0),
+            assigneeIds: it.assigneeIds,
+            returned: it.returned,
+          })),
+          taxCents,
+          tipFeesCents,
+          discountCents,
+          refundCents,
+        }),
+        splitError: null,
+      };
+    } catch (err) {
+      return {
+        result: null,
+        splitError: err instanceof Error ? err.message : "Couldn't split this receipt.",
+      };
     }
-  }, [items, taxDollars]);
+  }, [items, taxDollars, tipFeesCents, discountCents, refundCents]);
 
   const unassignedCount = items.filter((it) => it.assigneeIds.length === 0).length;
   const payer = personById.get(payerId);
@@ -70,6 +87,12 @@ export function BreakdownCard({
         <p className="text-sm font-semibold text-danger" role="alert">
           {unassignedCount === 1 ? "1 item needs" : `${unassignedCount} items need`} at
           least one person before you can save.
+        </p>
+      )}
+
+      {splitError && (
+        <p className="text-sm font-semibold text-danger" role="alert">
+          {splitError}
         </p>
       )}
 
