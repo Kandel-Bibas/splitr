@@ -58,9 +58,9 @@ async function addItem(owner: string, plaidItemId: string, token: string, instit
 
 /** Links a new split to the transaction with this Plaid id; returns the split's id. */
 async function splitOn(plaidId: string): Promise<string> {
-  const [e] = await admin`insert into splitr."Expense" ("ownerId", "type", "payerId", "totalCents", "splitMethod", "transactionId")
-    select ${ann}, 'SIMPLE', ${p1}, 1234, 'EVEN', "id" from splitr."Transaction" where "plaidTransactionId" = ${plaidId}
-    returning "id"`
+  const [e] = await admin`insert into splitr."Expense" ("ownerId", "type", "payerId", "totalCents", "splitMethod")
+    values (${ann}, 'SIMPLE', ${p1}, 1234, 'EVEN') returning "id"`
+  await admin`update splitr."Transaction" set "expenseId" = ${e.id} where "plaidTransactionId" = ${plaidId}`
   await admin`insert into splitr."ExpenseParticipant" ("ownerId", "expenseId", "personId") values (${ann}, ${e.id}, ${p1})`
   return e.id as string
 }
@@ -133,9 +133,8 @@ describe('sync SQL', () => {
       await deleteTransactions(db, ['pend'])
     })
 
-    const [row] = await admin`select t."plaidTransactionId" from splitr."Expense" e
-      join splitr."Transaction" t on t."id" = e."transactionId" where e."id" = ${split}`
-    expect(row?.plaidTransactionId).toBe('posted')
+    const rows = await admin`select "plaidTransactionId" from splitr."Transaction" where "expenseId" = ${split}`
+    expect(rows.map((r) => r.plaidTransactionId)).toEqual(['posted'])
   })
 
   it('leaves a posted charge that is already split alone', async () => {
@@ -148,9 +147,9 @@ describe('sync SQL', () => {
       await deleteTransactions(db, ['pend'])
     })
 
-    const linked = new Map((await admin`select "id", "transactionId" is not null as linked from splitr."Expense" where "ownerId" = ${ann}`).map((r) => [r.id, r.linked]))
-    expect(linked.get(onPending)).toBe(false)
-    expect(linked.get(onPosted)).toBe(true)
+    const linked = await admin`select "expenseId" from splitr."Transaction" where "plaidTransactionId" = 'posted'`
+    expect(linked.map((r) => r.expenseId)).toEqual([onPosted])
+    expect(await admin`select 1 from splitr."Transaction" where "expenseId" = ${onPending}`).toHaveLength(0)
   })
 
   it('keeps a split when the bank removes its charge, just unlinked', async () => {
@@ -159,7 +158,8 @@ describe('sync SQL', () => {
 
     await run(ann, (db) => deleteTransactions(db, ['t1']))
 
-    expect(await admin`select "id", "transactionId" from splitr."Expense" where "ownerId" = ${ann}`).toEqual([{ id: split, transactionId: null }])
+    expect(await admin`select "id" from splitr."Expense" where "ownerId" = ${ann}`).toEqual([{ id: split }])
+    expect(await admin`select 1 from splitr."Transaction" where "expenseId" = ${split}`).toHaveLength(0)
   })
 
   it('touches only the signed-in user\'s rows', async () => {

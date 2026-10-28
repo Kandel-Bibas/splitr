@@ -65,8 +65,9 @@ beforeAll(async () => {
 
     // Shared with Bob: Bea is a participant
     const [shared] = await tx`insert into splitr."Expense"
-      ("type", "description", "payerId", "totalCents", "splitMethod", "transactionId")
-      values ('SIMPLE', 'Walmart run', ${ids.Alice}, 4200, 'EVEN', ${txn.id}) returning "id"`
+      ("type", "description", "payerId", "totalCents", "splitMethod")
+      values ('SIMPLE', 'Walmart run', ${ids.Alice}, 4200, 'EVEN') returning "id"`
+    await tx`update splitr."Transaction" set "expenseId" = ${shared.id} where "id" = ${txn.id}`
     await tx`insert into splitr."ExpenseParticipant" ("expenseId", "personId") values
       (${shared.id}, ${ids.Alice}), (${shared.id}, ${ids.Bea})`
     await tx`insert into splitr."_ExpenseToTag" ("A", "B") values (${shared.id}, ${tag.id})`
@@ -238,8 +239,13 @@ describe('the owner', () => {
     const [bobTxn] = await as(bob, (tx) =>
       tx`insert into splitr."Transaction" ("source", "date", "amount", "name")
          values ('MANUAL', '2026-10-18', 100, 'Cash') returning "id"`)
-    expect(await failsWith(as(alice, (tx) =>
-      tx`update splitr."Expense" set "transactionId" = ${bobTxn.id} where "id" = ${ids.private}`,
+    await as(alice, async (tx) => {
+      expect(await tx`update splitr."Transaction" set "expenseId" = ${ids.private} where "id" = ${bobTxn.id} returning 1`)
+        .toHaveLength(0)
+    })
+    // Bob can see Alice's shared split, but can't hang his charge on it
+    expect(await failsWith(as(bob, (tx) =>
+      tx`update splitr."Transaction" set "expenseId" = ${ids.shared} where "id" = ${bobTxn.id}`,
     ))).toBe(FOREIGN_KEY_VIOLATION)
   })
 })

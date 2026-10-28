@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { expenseQuery, isNotFound, peopleQuery, useRefreshAll } from "../queries";
 import { Chevron } from "@/components/Chevron";
+import { ChargePicker, ChargeTotal, chargeAccountLabel, shortDate, type ExpenseCharge } from "@/components/ChargePicker";
 import Link, { useGoTo, useRouteParam } from "@/components/Link";
 import { Button } from "@/components/ui/Button";
 import { BackLink } from "@/components/BackLink";
@@ -12,6 +13,7 @@ import { PersonChip } from "@/components/PersonChip";
 import { TagPicker } from "@/components/TagPicker";
 import { formatUSD } from "@/lib/money";
 import { expenseDay } from "@/lib/expense-filter";
+import { txLabel } from "@/lib/transactions";
 import { apiFetch } from "../api";
 
 // ---------------------------------------------------------------------------
@@ -51,14 +53,8 @@ interface Expense {
     assignments: { personId: string }[];
   }[];
   tags: string[];
-  /** The bank or hand-added charge this split was made from */
-  transaction: {
-    id: number;
-    date: string;
-    amount: number;
-    source: "PLAID" | "MANUAL";
-    account: { name: string; mask: string | null; item: { institutionName: string | null } } | null;
-  } | null;
+  /** The card charges that paid for this split, oldest first */
+  charges: ExpenseCharge[];
   breakdown: {
     payerId: string;
     perPerson: { personId: string; cents: number }[];
@@ -117,6 +113,8 @@ export default function ExpenseDetailPage() {
   function patchCached(change: Partial<Expense>) {
     client.setQueryData<Expense>(expenseKey, (e) => (e ? { ...e, ...change } : e));
   }
+
+  const [pickingCharges, setPickingCharges] = useState(false);
 
   // Delete state
   const [deleting, setDeleting] = useState(false);
@@ -189,7 +187,7 @@ export default function ExpenseDetailPage() {
           (body as { error?: string }).error ?? `Error ${res.status}`
         );
       }
-      goTo(expense.transaction ? `/transactions/${expense.transaction.id}` : "/splits");
+      goTo(expense.charges.length > 0 ? `/transactions/${expense.charges[0].id}` : "/splits");
       refreshAll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Delete failed. Try again.");
@@ -277,7 +275,7 @@ export default function ExpenseDetailPage() {
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <header>
-        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-ink-muted">
+        <p className="text-sm font-semibold text-ink-muted">
           {formatDate(expenseDay(expense))} · {expense.type === "ITEMIZED" ? "Receipt" : "Quick split"}
         </p>
         <h1 className="mt-2 font-display text-5xl sm:text-6xl uppercase break-words">{label}</h1>
@@ -296,26 +294,56 @@ export default function ExpenseDetailPage() {
         </div>
       </header>
 
-      {/* ── Source charge ───────────────────────────────────────────────── */}
-      {expense.transaction && (
-        <Link
-          href={`/transactions/${expense.transaction.id}`}
-          className="flex items-center gap-3 rounded-3xl border border-ink bg-mist px-5 py-3 text-sm hover:bg-sun/40 transition-colors"
-        >
-          <span className="flex-1 min-w-0 truncate">
-            From your{" "}
-            <span className="font-semibold">
-              {expense.transaction.account
-                ? `${expense.transaction.account.item.institutionName ?? expense.transaction.account.name}${
-                    expense.transaction.account.mask ? ` •• ${expense.transaction.account.mask}` : ""
-                  }`
-                : "cash"}
-            </span>{" "}
-            charge of <span className="font-semibold tabular-nums">{formatUSD(expense.transaction.amount)}</span>
-          </span>
-          <Chevron direction="right" className="w-4 h-4 shrink-0" />
-        </Link>
-      )}
+      {/* ── Charges ─────────────────────────────────────────────────────── */}
+      <section aria-labelledby="charges-heading" className="space-y-2">
+        <h2 id="charges-heading" className="px-1 text-sm font-semibold text-ink-muted">
+          Charges
+        </h2>
+        {pickingCharges ? (
+          <ChargePicker
+            expenseId={expense.id}
+            store={expense.store}
+            day={expenseDay(expense)}
+            totalCents={expense.totalCents}
+            linked={expense.charges}
+            onClose={() => setPickingCharges(false)}
+          />
+        ) : (
+          <div className="space-y-3">
+            {expense.charges.length === 0 ? (
+              <p className="px-1 text-sm text-ink-muted">Not linked to a card charge</p>
+            ) : (
+              <>
+                <ul className="rounded-3xl border border-ink bg-mist divide-y divide-rim overflow-hidden">
+                  {expense.charges.map((c) => (
+                    <li key={c.id}>
+                      <Link
+                        href={`/transactions/${c.id}`}
+                        className="flex items-center gap-3 px-5 py-3 hover:bg-sun/40 transition-colors"
+                      >
+                        <span className="flex-1 min-w-0">
+                          <span className="block truncate text-sm font-semibold">{txLabel(c)}</span>
+                          <span className="block truncate text-xs text-ink-muted">
+                            {chargeAccountLabel(c.account)} · {shortDate(c.date)}
+                          </span>
+                        </span>
+                        <span className="text-sm tabular-nums">{formatUSD(c.amount)}</span>
+                        <Chevron direction="right" className="w-4 h-4 shrink-0" />
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+                <div className="px-1">
+                  <ChargeTotal amounts={expense.charges.map((c) => c.amount)} totalCents={expense.totalCents} />
+                </div>
+              </>
+            )}
+            <Button variant="secondary" size="sm" onClick={() => setPickingCharges(true)}>
+              {expense.charges.length > 0 ? "Edit charges" : "Link charges"}
+            </Button>
+          </div>
+        )}
+      </section>
 
       {/* ── Actions ─────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -340,7 +368,7 @@ export default function ExpenseDetailPage() {
 
       {/* ── Who owes what ───────────────────────────────────────────────── */}
       <section aria-labelledby="owes-heading">
-        <h2 id="owes-heading" className="px-1 pb-2 text-xs font-semibold uppercase tracking-[0.08em] text-ink-muted">
+        <h2 id="owes-heading" className="px-1 pb-2 text-sm font-semibold text-ink-muted">
           Who owes what
         </h2>
         <ul className="rounded-3xl border border-ink divide-y divide-rim overflow-hidden">
@@ -378,7 +406,7 @@ export default function ExpenseDetailPage() {
       {/* ── Items (receipts only) ───────────────────────────────────────── */}
       {expense.type === "ITEMIZED" && expense.items.length > 0 && (
         <section aria-labelledby="items-heading">
-          <h2 id="items-heading" className="px-1 pb-2 text-xs font-semibold uppercase tracking-[0.08em] text-ink-muted">
+          <h2 id="items-heading" className="px-1 pb-2 text-sm font-semibold text-ink-muted">
             Items · {expense.items.length}
           </h2>
           <ul className="rounded-3xl border border-ink divide-y divide-rim overflow-hidden">
@@ -428,7 +456,7 @@ export default function ExpenseDetailPage() {
 
       {/* ── Tags ────────────────────────────────────────────────────────── */}
       <section aria-labelledby="tags-heading" className="space-y-2">
-        <h2 id="tags-heading" className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-ink-muted">
+        <h2 id="tags-heading" className="px-1 text-sm font-semibold text-ink-muted">
           Tags
         </h2>
         <TagPicker value={tags} onChange={handleTagsChange} />

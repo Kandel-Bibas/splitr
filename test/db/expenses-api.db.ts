@@ -300,3 +300,93 @@ describe("another user's splits", () => {
     expect(((await call(ben, 'GET', '/api/people')).body as { name: string }[]).map((p) => p.name)).toEqual(['Ben'])
   })
 })
+
+describe('charges on a split', () => {
+  const charge = async (user: string, amountCents: number, name = 'WALMART') =>
+    (await post<{ id: number }>(user, '/api/transactions', { name, amountCents, date: '2026-10-19', categoryPrimary: 'GENERAL_MERCHANDISE' })).id
+  type Tx = { id: number; split: { expenseId: string; owedBackCents: number; chargeCount: number } | null }
+  const txsOf = async (user: string) => (await call(user, 'GET', '/api/transactions')).body as unknown as Tx[]
+  const chargeIds = async (user: string, id: string) =>
+    ((await call(user, 'GET', `/api/expenses/${id}`)).body.charges as { id: number }[]).map((c) => c.id)
+
+  it('links several charges and divides what comes back by their amounts', async () => {
+    const id = idOf(await post(ann, '/api/expenses', order()))
+    // The $14.20 order charged as $9.00 + $5.20; Sam owes $7.70
+    const [a, b] = [await charge(ann, 900), await charge(ann, 520)]
+
+    const res = await call(ann, 'PUT', `/api/expenses/${id}/charges`, { transactionIds: [b, a] })
+    expect(res.status).toBe(200)
+    expect((res.body.charges as { id: number; amount: number }[]).map((c) => [c.id, c.amount])).toEqual([[a, 900], [b, 520]])
+    expect(await chargeIds(ann, id)).toEqual([a, b])
+
+    const splits = new Map((await txsOf(ann)).map((t) => [t.id, t.split]))
+    expect(splits.get(a)).toMatchObject({ expenseId: id, chargeCount: 2, owedBackCents: 488 })
+    expect(splits.get(b)).toMatchObject({ expenseId: id, chargeCount: 2, owedBackCents: 282 })
+  })
+
+  it('sets the whole list: charges left out are unlinked', async () => {
+    const id = idOf(await post(ann, '/api/expenses', order()))
+    const [a, b] = [await charge(ann, 900), await charge(ann, 520)]
+    await call(ann, 'PUT', `/api/expenses/${id}/charges`, { transactionIds: [a, b] })
+
+    expect((await call(ann, 'PUT', `/api/expenses/${id}/charges`, { transactionIds: [a, a] })).status).toBe(200)
+    expect(await chargeIds(ann, id)).toEqual([a])
+    expect(new Map((await txsOf(ann)).map((t) => [t.id, t.split])).get(a)).toMatchObject({ chargeCount: 1, owedBackCents: 770 })
+
+    expect((await call(ann, 'PUT', `/api/expenses/${id}/charges`, { transactionIds: [] })).status).toBe(200)
+    expect(await chargeIds(ann, id)).toEqual([])
+    expect((await txsOf(ann)).every((t) => t.split === null)).toBe(true)
+  })
+
+  it("refuses a charge that's on another split, and changes nothing", async () => {
+    const first = idOf(await post(ann, '/api/expenses', quick()))
+    const second = idOf(await post(ann, '/api/expenses', order()))
+    const [a, b] = [await charge(ann, 3000), await charge(ann, 900)]
+    await call(ann, 'PUT', `/api/expenses/${first}/charges`, { transactionIds: [a] })
+    await call(ann, 'PUT', `/api/expenses/${second}/charges`, { transactionIds: [b] })
+
+    expect(await call(ann, 'PUT', `/api/expenses/${second}/charges`, { transactionIds: [a] })).toEqual({
+      status: 409,
+      body: { error: 'That charge is already on another split', transactionId: a, expenseId: first },
+    })
+    expect(await chargeIds(ann, first)).toEqual([a])
+    expect(await chargeIds(ann, second)).toEqual([b])
+  })
+
+  it('rejects bad lists', async () => {
+    const id = idOf(await post(ann, '/api/expenses', order()))
+    const bad = 'transactionIds must be a list of transaction ids'
+    for (const body of [{}, { transactionIds: 'x' }, { transactionIds: [1.5] }, { transactionIds: [3e9] }]) {
+      expect(await call(ann, 'PUT', `/api/expenses/${id}/charges`, body)).toEqual({ status: 400, body: { error: bad } })
+    }
+    const many = Array.from({ length: 21 }, (_, i) => i + 1)
+    expect((await call(ann, 'PUT', `/api/expenses/${id}/charges`, { transactionIds: many })).status).toBe(400)
+    expect((await call(ann, 'PUT', `/api/expenses/${id}/charges`, { transactionIds: [2147483647] })).status).toBe(400)
+    expect((await call(ann, 'PUT', '/api/expenses/not-a-uuid/charges', { transactionIds: [] })).status).toBe(404)
+  })
+
+  it("keeps users to their own splits and charges", async () => {
+    const id = idOf(await post(ann, '/api/expenses', order()))
+    const annCharge = await charge(ann, 900)
+    const benMe = idOf(await post(ben, '/api/people', { name: 'Ben' }))
+    const benSplit = idOf(await post(ben, '/api/expenses', quick({ payerId: benMe, participants: [{ personId: benMe }] })))
+    const benCharge = await charge(ben, 500)
+
+    expect((await call(ben, 'PUT', `/api/expenses/${id}/charges`, { transactionIds: [benCharge] })).status).toBe(404)
+    expect((await call(ben, 'PUT', `/api/expenses/${benSplit}/charges`, { transactionIds: [annCharge] })).status).toBe(400)
+    expect((await call(ann, 'PUT', `/api/expenses/${id}/charges`, { transactionIds: [benCharge] })).status).toBe(400)
+    expect(await chargeIds(ann, id)).toEqual([])
+    expect(await chargeIds(ben, benSplit)).toEqual([])
+  })
+
+  it('leaves its charges, unlinked, when the split is deleted', async () => {
+    const id = idOf(await post(ann, '/api/expenses', order()))
+    const [a, b] = [await charge(ann, 900), await charge(ann, 520)]
+    await call(ann, 'PUT', `/api/expenses/${id}/charges`, { transactionIds: [a, b] })
+
+    expect((await call(ann, 'DELETE', `/api/expenses/${id}`)).status).toBe(200)
+    const txs = await txsOf(ann)
+    expect(txs.map((t) => t.id).sort()).toEqual([a, b].sort())
+    expect(txs.every((t) => t.split === null)).toBe(true)
+  })
+})

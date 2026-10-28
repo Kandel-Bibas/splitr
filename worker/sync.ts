@@ -115,12 +115,12 @@ export async function upsertTransactions(db: Db, txs: PlaidTransaction[], create
  */
 export async function moveSplitsToPosted(db: Db, pairs: { pending: string; posted: string }[]) {
   await db.execute(sql`
-    UPDATE splitr."Expense" e SET "transactionId" = po."id"
+    UPDATE splitr."Transaction" po SET "expenseId" = pe."expenseId"
     FROM jsonb_to_recordset(${JSON.stringify(pairs)}::jsonb) AS j("pending" text, "posted" text)
     JOIN splitr."Transaction" pe ON pe."plaidTransactionId" = j."pending"
-    JOIN splitr."Transaction" po ON po."plaidTransactionId" = j."posted"
-    WHERE e."transactionId" = pe."id"
-      AND NOT EXISTS (SELECT 1 FROM splitr."Expense" e2 WHERE e2."transactionId" = po."id")`)
+    WHERE po."plaidTransactionId" = j."posted"
+      AND pe."expenseId" IS NOT NULL
+      AND po."expenseId" IS NULL`)
 }
 
 /** A split made from a removed transaction stays; its link is cleared. */

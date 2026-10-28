@@ -50,8 +50,6 @@ export const expense = splitr.table('Expense', {
   loggedToSplitwise: boolean('loggedToSplitwise').notNull().default(false),
   imagePath: text('imagePath'),
   createdAt: dateTime('createdAt').notNull().defaultNow(),
-  // The bank or hand-added transaction this split was made from, if any
-  transactionId: integer('transactionId'),
   // The online order it was imported from ("walmart-<id>"); unique
   orderRef: text('orderRef'),
 })
@@ -155,6 +153,9 @@ export const transaction = splitr.table('Transaction', {
   categoryDetailed: text('categoryDetailed'),
   // Your pick, which wins over the bank's category; sync never touches it
   userCategory: text('userCategory'),
+  // The split this charge pays for, if any. A split can have several charges
+  // (an order charged per shipment); a charge belongs to at most one split.
+  expenseId: uuid('expenseId'),
   pending: boolean('pending').notNull().default(false),
   isoCurrencyCode: text('isoCurrencyCode').notNull().default('USD'),
   createdAt: dateTime('createdAt').notNull().defaultNow(),
@@ -180,7 +181,7 @@ export const personRelations = relations(person, ({ many }) => ({
 
 export const expenseRelations = relations(expense, ({ one, many }) => ({
   payer: one(person, { fields: [expense.payerId], references: [person.id] }),
-  transaction: one(transaction, { fields: [expense.transactionId], references: [transaction.id] }),
+  charges: many(transaction),
   items: many(item),
   participants: many(expenseParticipant),
   tagLinks: many(expenseToTag),
@@ -219,5 +220,5 @@ export const accountRelations = relations(account, ({ one, many }) => ({
 
 export const transactionRelations = relations(transaction, ({ one }) => ({
   account: one(account, { fields: [transaction.accountId], references: [account.id] }),
-  expense: one(expense, { fields: [transaction.id], references: [expense.transactionId] }),
+  expense: one(expense, { fields: [transaction.expenseId], references: [expense.id] }),
 }))

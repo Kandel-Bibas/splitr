@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { and, count, eq, inArray } from 'drizzle-orm'
+import { type SQL, and, asc, count, eq, inArray, isNull, notInArray } from 'drizzle-orm'
 import { type ExpenseInput, expenseFields, parseExpenseInput } from '@/lib/expense-input'
 import { parseBulkAction } from '@/lib/bulk'
 import { parseTags, unknownTags } from '@/lib/tags'
@@ -13,6 +13,7 @@ import {
   itemAssignment,
   person,
   tag,
+  transaction,
 } from '../db/schema'
 import { EXPENSE_WITH, breakdownOf, expenseJson, findExpense, isInt4 } from '../views'
 import { isUuid, readJson } from '../http'
@@ -105,6 +106,24 @@ const UNKNOWN_PERSON = 'payerId, participants and assignees must be ids of your 
 
 const ORDER_REF = /^(walmart|samsclub)-\d+$/
 
+/** An order charged once per shipment rarely needs more; bounds the request. */
+const MAX_CHARGES = 20
+
+/**
+ * A split's charges as its page shows them: chosen columns, never the whole
+ * row (the bank's row holds the Plaid access token), oldest first.
+ */
+const CHARGE_WITH = {
+  columns: { id: true, date: true, amount: true, source: true, name: true, merchantName: true },
+  with: {
+    account: {
+      columns: { name: true, mask: true },
+      with: { item: { columns: { institutionName: true } } },
+    },
+  },
+  orderBy: [asc(transaction.date), asc(transaction.id)] as SQL[],
+} as const
+
 function findByOrder(db: Db, ownerId: string, orderRef: string) {
   return db.query.expense.findFirst({
     where: (e, { and, eq }) => and(eq(e.orderRef, orderRef), eq(e.ownerId, ownerId)),
@@ -143,13 +162,14 @@ expenses.post('/', async (c) => {
   const { transactionId } = (body ?? {}) as { transactionId?: unknown }
   if (transactionId !== undefined) {
     if (!isInt4(transactionId)) return c.json({ error: 'transactionId must be an integer' }, 400)
-    const source = await db.query.transaction.findFirst({
-      where: (t, { and, eq }) => and(eq(t.id, transactionId), eq(t.ownerId, uid)),
-      columns: { id: true },
-      with: { expense: { columns: { id: true } } },
-    })
+    // Locked until this request ends, so two splits can't both claim it
+    const [source] = await db
+      .select({ id: transaction.id, expenseId: transaction.expenseId })
+      .from(transaction)
+      .where(and(eq(transaction.id, transactionId), eq(transaction.ownerId, uid)))
+      .for('update')
     if (!source) return c.json({ error: 'That transaction no longer exists' }, 400)
-    if (source.expense) return c.json({ error: 'That transaction is already split' }, 409)
+    if (source.expenseId) return c.json({ error: 'That transaction is already split' }, 409)
   }
 
   // Optional: the Walmart or Sam's Club order this split was imported from
@@ -169,7 +189,6 @@ expenses.post('/', async (c) => {
     .values({
       id,
       ...expenseFields(input),
-      ...(transactionId !== undefined && { transactionId }),
       ...(orderRef !== undefined && { orderRef: orderRef as string }),
     })
     .onConflictDoNothing({ target: [expense.ownerId, expense.orderRef] })
@@ -180,6 +199,9 @@ expenses.post('/', async (c) => {
     return c.json({ error: 'That order is already split', id: existing?.id }, 409)
   }
   await writeChildren(db, id, input, tags.map((t) => t.id))
+  if (transactionId !== undefined) {
+    await db.update(transaction).set({ expenseId: id }).where(eq(transaction.id, transactionId as number))
+  }
 
   const saved = (await findForBreakdown(db, uid, id))!
   return c.json({ id, breakdown: breakdownOf(saved) }, 201)
@@ -281,23 +303,71 @@ expenses.get('/:id', async (c) => {
     where: (e, { and, eq }) => and(eq(e.id, id), eq(e.ownerId, c.var.user.sub)),
     with: {
       ...EXPENSE_WITH,
-      // columns, not the whole row: the bank row holds the Plaid access token
-      transaction: {
-        columns: { id: true, date: true, amount: true, source: true },
-        with: {
-          account: {
-            columns: { name: true, mask: true },
-            with: { item: { columns: { institutionName: true } } },
-          },
-        },
-      },
+      charges: CHARGE_WITH,
     },
   })
   if (!row) return c.json({ error: 'Expense not found' }, 404)
 
-  const { transaction: tx, ...rest } = row
+  const { charges, ...rest } = row
   const exp = expenseJson(rest)
-  return c.json({ ...exp, transaction: tx ?? null, breakdown: breakdownOf(exp) })
+  return c.json({ ...exp, charges, breakdown: breakdownOf(exp) })
+})
+
+// ---------------------------------------------------------------------------
+// PUT /api/expenses/:id/charges  — { transactionIds: number[] }
+// ---------------------------------------------------------------------------
+// The card charges that paid for this split, as a whole set: charges left out
+// are unlinked. A charge already on another split is refused, not moved.
+expenses.put('/:id/charges', async (c) => {
+  const db = c.var.db
+  const uid = c.var.user.sub
+  const id = c.req.param('id')
+  if (!isUuid(id)) return c.json({ error: 'Expense not found' }, 404)
+  const body = await readJson(c)
+  if (body instanceof Response) return body
+  const raw = (body as { transactionIds?: unknown } | null)?.transactionIds
+  if (!Array.isArray(raw) || !raw.every(isInt4)) {
+    return c.json({ error: 'transactionIds must be a list of transaction ids' }, 400)
+  }
+  const ids = [...new Set(raw as number[])]
+  if (ids.length > MAX_CHARGES) return c.json({ error: `A split can have at most ${MAX_CHARGES} charges` }, 400)
+
+  const [split] = await db
+    .select({ id: expense.id })
+    .from(expense)
+    .where(and(eq(expense.id, id), eq(expense.ownerId, uid)))
+  if (!split) return c.json({ error: 'Expense not found' }, 404)
+
+  if (ids.length > 0) {
+    // Locked until this request ends, so another split can't claim them meanwhile
+    const chosen = await db
+      .select({ id: transaction.id, expenseId: transaction.expenseId })
+      .from(transaction)
+      .where(and(inArray(transaction.id, ids), eq(transaction.ownerId, uid)))
+      .for('update')
+    if (chosen.length !== ids.length) return c.json({ error: 'One of those transactions no longer exists' }, 400)
+    const taken = chosen.find((t) => t.expenseId !== null && t.expenseId !== id)
+    if (taken) {
+      return c.json({ error: 'That charge is already on another split', transactionId: taken.id, expenseId: taken.expenseId }, 409)
+    }
+  }
+
+  await db
+    .update(transaction)
+    .set({ expenseId: null })
+    .where(and(eq(transaction.expenseId, id), ...(ids.length > 0 ? [notInArray(transaction.id, ids)] : [])))
+  if (ids.length > 0) {
+    await db
+      .update(transaction)
+      .set({ expenseId: id })
+      .where(and(inArray(transaction.id, ids), isNull(transaction.expenseId)))
+  }
+
+  const charges = await db.query.transaction.findMany({
+    where: (t, { eq }) => eq(t.expenseId, id),
+    ...CHARGE_WITH,
+  })
+  return c.json({ charges })
 })
 
 // ---------------------------------------------------------------------------

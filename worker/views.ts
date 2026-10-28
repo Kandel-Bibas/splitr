@@ -1,6 +1,6 @@
 import { asc } from 'drizzle-orm'
 import { computeBreakdown, type Breakdown } from '@/lib/expense-breakdown'
-import type { TxView } from '@/lib/transactions'
+import { chargeShares, type TxView } from '@/lib/transactions'
 import type { Db } from './db'
 import { item } from './db/schema'
 
@@ -77,9 +77,15 @@ export function breakdownOf(e: BreakdownSource): Breakdown {
 // Transactions
 // ---------------------------------------------------------------------------
 
-/** What txView needs to describe a linked split. */
+/** What txView needs to describe a linked split, and its share of it. */
 export const TX_WITH = {
-  expense: { with: { items: { with: { assignments: true } }, participants: true } },
+  expense: {
+    with: {
+      items: { with: { assignments: true } },
+      participants: true,
+      charges: { columns: { id: true, amount: true } },
+    },
+  },
 } as const
 
 type TxRow = NonNullable<Awaited<ReturnType<typeof findTx>>>
@@ -96,10 +102,12 @@ export function txView(tx: TxRow): TxView {
   let split: TxView['split'] = null
   if (tx.expense) {
     const breakdown = breakdownOf(tx.expense)
+    const owedBackCents = breakdown.owes.reduce((s, o) => s + o.cents, 0)
     split = {
       expenseId: tx.expense.id,
       ways: breakdown.perPerson.length,
-      owedBackCents: breakdown.owes.reduce((s, o) => s + o.cents, 0),
+      owedBackCents: chargeShares(owedBackCents, tx.expense.charges).get(tx.id) ?? 0,
+      chargeCount: tx.expense.charges.length,
       logged: tx.expense.loggedToSplitwise,
     }
   }
