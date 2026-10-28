@@ -5,6 +5,7 @@ import { peopleQuery, useRefreshAll } from "../queries";
 import { Button } from "@/components/ui/Button";
 import { Field, Input } from "@/components/ui/Field";
 import { PersonAvatar } from "@/components/PersonChip";
+import { apiFetch } from "../api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -137,7 +138,7 @@ export default function PeoplePage() {
     }
     setAddPending(true);
     try {
-      const res = await fetch("/api/people", {
+      const res = await apiFetch("/api/people", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -191,7 +192,7 @@ export default function PeoplePage() {
     }
     setEditPending(true);
     try {
-      const res = await fetch(`/api/people/${editId}`, {
+      const res = await apiFetch(`/api/people/${editId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -223,7 +224,7 @@ export default function PeoplePage() {
   async function handleArchive(id: string) {
     setArchivePending(true);
     try {
-      const res = await fetch(`/api/people/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/people/${id}`, { method: "DELETE" });
       if (!res.ok) {
         throw new Error(`Error ${res.status}`);
       }

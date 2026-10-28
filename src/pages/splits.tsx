@@ -8,6 +8,7 @@ import { SelectionBar } from "@/components/SelectionBar";
 import { PersonChip } from "@/components/PersonChip";
 import { formatUSD } from "@/lib/money";
 import { settleExpenses } from "@/lib/settle";
+import { apiFetch } from "../api";
 import {
   filterExpenses,
   expenseDay,
@@ -260,7 +261,7 @@ export default function SplitsPage() {
   /** Runs a bulk action on the ticked expenses, then reloads the list */
   async function runBulk(action: Record<string, unknown>) {
     const ids = selectedExpenses.map((e) => e.id);
-    const res = await fetch("/api/expenses/bulk", {
+    const res = await apiFetch("/api/expenses/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids, ...action }),

@@ -9,6 +9,7 @@ import { PlaidLinkButton } from "@/components/PlaidLinkButton";
 import { formatUSD } from "@/lib/money";
 import { netBalance } from "@/lib/spending";
 import { lastSynced, timeAgo, type BankItem } from "@/lib/bank-types";
+import { apiFetch } from "../api";
 
 export default function BanksPage() {
   const { data, error: loadError } = useQuery(accountsQuery);
@@ -32,7 +33,7 @@ export default function BanksPage() {
   // One toast that reads "Syncing…" until the sync lands.
   function syncAfterLink(url: string, syncing: string, done: string, retry: string) {
     toast.loading(syncing, { id: "link" });
-    fetch(url, { method: "POST" })
+    apiFetch(url, { method: "POST" })
       .then((r) => r.json() as Promise<{ results?: SyncResult[] }>)
       .then((d) => {
         onSynced(d.results ?? []);
@@ -166,7 +167,7 @@ function BankCard({
   async function unlink() {
     setBusy(true);
     try {
-      const res = await fetch(`/api/plaid/items/${item.id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/plaid/items/${item.id}`, { method: "DELETE" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `Error ${res.status}`);

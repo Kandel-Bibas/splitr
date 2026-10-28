@@ -11,6 +11,7 @@ import { toCents, formatUSD } from "@/lib/money";
 import { MANUAL_CATEGORIES, todayLocal } from "@/lib/spending";
 import type { TxView } from "@/lib/transactions";
 import { loadManualTxToEdit, useRefreshAll } from "../queries";
+import { apiFetch } from "../api";
 
 export default function AddExpensePage() {
   // ?edit=<id> opens this form pre-filled to edit a hand-added expense
@@ -48,7 +49,7 @@ export default function AddExpensePage() {
     if (!canSave) return;
     setSaving(then);
     try {
-      const res = await fetch(editId ? `/api/transactions/${editId}` : "/api/transactions", {
+      const res = await apiFetch(editId ? `/api/transactions/${editId}` : "/api/transactions", {
         method: editId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

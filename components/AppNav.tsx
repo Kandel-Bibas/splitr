@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 import Link from "@/components/Link";
 import { useRouterState } from "@tanstack/react-router";
+import { signOut, useSession } from "../src/auth";
 
 // Each section also owns the detail pages under these prefixes
 const NAV_LINKS = [
@@ -92,6 +93,7 @@ const PILL =
 export default function AppNav() {
   const pathname = usePathname();
   const { listRef, pillRef } = useSlidingPill(NAV_LINKS.findIndex((link) => isActive(pathname, link)));
+  const email = useSession().user.email;
 
   return (
     // On short screens (a phone on its side) it scrolls away instead of
@@ -139,6 +141,23 @@ export default function AppNav() {
           <span aria-hidden="true" className="text-base leading-none">+</span>
           <span>New</span>
         </Link>
+
+        {/* Account */}
+        <div className="shrink-0 flex items-center gap-2">
+          {email && (
+            <span className="hidden md:inline max-w-[14rem] truncate text-sm text-ink-muted" title={email}>
+              {email}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            title={email ? `Signed in as ${email}` : undefined}
+            className="h-9 px-3 rounded-full text-sm font-semibold text-ink-muted hover:text-ink hover:bg-mist transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
     </header>
   );

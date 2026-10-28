@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { tagsQuery, useRefreshAll } from "../queries";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
+import { apiFetch } from "../api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,7 +60,7 @@ export default function TagsPage() {
     if (!addName.trim()) return;
     setAddPending(true);
     try {
-      const res = await fetch("/api/tags", {
+      const res = await apiFetch("/api/tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: addName }),
@@ -89,7 +90,7 @@ export default function TagsPage() {
     if (!editId || !editName.trim()) return;
     setEditPending(true);
     try {
-      const res = await fetch(`/api/tags/${editId}`, {
+      const res = await apiFetch(`/api/tags/${editId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: editName }),
@@ -111,7 +112,7 @@ export default function TagsPage() {
   async function handleDelete(id: string) {
     setDeletePending(true);
     try {
-      const res = await fetch(`/api/tags/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/tags/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error(await errorMessage(res));
       setDeleteId(null);
       await refreshAll();

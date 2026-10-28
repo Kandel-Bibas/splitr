@@ -18,6 +18,7 @@ import { toCents, formatUSD } from "@/lib/money";
 import { splitItemized } from "@/lib/split";
 import { asCapture, importOrder, type ImportedOrder } from "@/lib/order-import";
 import { takeCapture } from "../order-handoff";
+import { apiFetch } from "../api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,7 +65,7 @@ async function readOrder(token: string): Promise<{ order: ImportedOrder; existin
   } catch (err) {
     throw new UnreadableCapture(err instanceof Error ? err.message : "Couldn't read this order.", capture);
   }
-  const res = await fetch(`/api/expenses/by-order/${encodeURIComponent(order.ref)}`);
+  const res = await apiFetch(`/api/expenses/by-order/${encodeURIComponent(order.ref)}`);
   if (res.status === 404) return { order, existingId: null };
   if (!res.ok) throw new Error(`Couldn't check whether this order is already split (error ${res.status}).`);
   const { id } = (await res.json()) as { id: string };
@@ -379,7 +380,7 @@ export default function NewItemizedPage() {
     };
 
     try {
-      const res = await fetch(editId ? `/api/expenses/${editId}` : "/api/expenses", {
+      const res = await apiFetch(editId ? `/api/expenses/${editId}` : "/api/expenses", {
         method: editId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

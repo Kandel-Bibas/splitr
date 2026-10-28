@@ -12,6 +12,7 @@ import { PersonChip } from "@/components/PersonChip";
 import { TagPicker } from "@/components/TagPicker";
 import { formatUSD } from "@/lib/money";
 import { expenseDay } from "@/lib/expense-filter";
+import { apiFetch } from "../api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -135,7 +136,7 @@ export default function ExpenseDetailPage() {
     patchCached({ loggedToSplitwise: newVal }); // optimistic
     setLogPending(true);
     try {
-      const res = await fetch(`/api/expenses/${id}`, {
+      const res = await apiFetch(`/api/expenses/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ loggedToSplitwise: newVal }),
@@ -158,7 +159,7 @@ export default function ExpenseDetailPage() {
     const prev = tags;
     patchCached({ tags: next }); // optimistic
     try {
-      const res = await fetch(`/api/expenses/${id}`, {
+      const res = await apiFetch(`/api/expenses/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tags: next }),
@@ -181,7 +182,7 @@ export default function ExpenseDetailPage() {
     if (!expense || deleting) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/expenses/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/expenses/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(

@@ -15,6 +15,7 @@ import { formatUSD } from "@/lib/money";
 import { ALL_CATEGORIES, isMoneyMoving, isSpending, yourShare } from "@/lib/spending";
 import { txLabel } from "@/lib/transactions";
 import { accountLabel, indexAccounts } from "@/lib/bank-types";
+import { apiFetch } from "../api";
 
 interface Person {
   id: string;
@@ -73,7 +74,7 @@ export default function TransactionPage() {
     const key = transactionQuery(id).queryKey;
     client.setQueryData(key, { ...tx, categoryPrimary: next, categoryDetailed: null }); // optimistic
     try {
-      const res = await fetch(`/api/transactions/${id}`, {
+      const res = await apiFetch(`/api/transactions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ categoryPrimary: next }),
@@ -90,7 +91,7 @@ export default function TransactionPage() {
   async function handleDelete() {
     setDeleting(true);
     try {
-      const res = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/transactions/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `Error ${res.status}`);
