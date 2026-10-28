@@ -24,7 +24,7 @@ function findItem(db: Db, ownerId: string, id: number) {
 
 plaidRoutes.post('/link-token', async (c) => {
   try {
-    const { link_token } = await plaid.linkTokenCreate(plaidRedirectUri())
+    const { link_token } = await plaid.linkTokenCreate(c.var.user.sub, plaidRedirectUri())
     return c.json({ link_token })
   } catch (error) {
     return plaidFailure(error, 'linkTokenCreate', 'Failed to create link token')
@@ -40,7 +40,7 @@ plaidRoutes.post('/link-token/:itemId', async (c) => {
   if (!item) return c.json({ error: 'Bank not found' }, 404)
   try {
     const accessToken = await decryptToken(item.accessToken, item.itemId, c.env.PLAID_TOKEN_KEY)
-    const { link_token } = await plaid.linkTokenCreate(plaidRedirectUri(), accessToken)
+    const { link_token } = await plaid.linkTokenCreate(c.var.user.sub, plaidRedirectUri(), accessToken)
     return c.json({ link_token })
   } catch (error) {
     return plaidFailure(error, `linkTokenCreate item ${id}`, 'Failed to create link token')
