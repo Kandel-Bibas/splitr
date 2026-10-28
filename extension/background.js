@@ -1,6 +1,6 @@
 // Holds captures from content.js until the Splitr page claims them, and opens that page.
 const SPLITR_DEV = 'http://localhost:5173';
-const SPLITR_PROD = 'https://money.aditya24sharma.dev';
+const SPLITR_PROD = 'https://splitr.bibas.dev';
 const SPLITR_ORIGINS = [SPLITR_DEV, SPLITR_PROD];
 const SHOP_ORIGINS = ['https://www.walmart.com', 'https://www.samsclub.com'];
 const KEY_PREFIX = 'capture:';

@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Splitr",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Send a Walmart or Sam's Club order to Splitr as an itemized expense.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://www.walmart.com/*",
     "https://www.samsclub.com/*",
-    "https://money.aditya24sharma.dev/*",
+    "https://splitr.bibas.dev/*",
     "http://localhost:5173/*"
   ],
   "background": {
@@ -24,7 +24,7 @@
     },
     {
       "matches": [
-        "https://money.aditya24sharma.dev/*",
+        "https://splitr.bibas.dev/*",
         "http://localhost:5173/*"
       ],
       "js": ["bridge.js"],
