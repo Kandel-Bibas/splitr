@@ -233,7 +233,7 @@ export default function MoneyPage() {
                 >
                   <Chevron direction="left" className="w-4 h-4" />
                 </button>
-                <p className="text-xs font-semibold uppercase tracking-[0.08em]">{monthName(month)}</p>
+                <p className="text-sm font-semibold">{monthName(month)}</p>
                 <button
                   type="button"
                   onClick={() => setPickedMonth(shiftMonth(month, 1))}
@@ -245,18 +245,18 @@ export default function MoneyPage() {
                 </button>
               </div>
 
-              <p className="mt-4 text-xs font-semibold uppercase tracking-[0.08em]">Spent</p>
+              <p className="mt-4 text-sm font-semibold">Spent</p>
               <p className="font-display text-7xl sm:text-8xl tabular-nums leading-none">
                 {formatUSD(summary.spentCents)}
               </p>
               {summary.owedBackCents > 0 && (
                 <dl className="mt-4 flex gap-8">
                   <div>
-                    <dt className="text-xs font-semibold uppercase tracking-[0.08em]">Owed to you</dt>
+                    <dt className="text-sm font-semibold">Owed to you</dt>
                     <dd className="mt-1 font-display text-3xl tabular-nums">{formatUSD(summary.owedBackCents)}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-semibold uppercase tracking-[0.08em]">Your share</dt>
+                    <dt className="text-sm font-semibold">Your share</dt>
                     <dd className="mt-1 font-display text-3xl tabular-nums">{formatUSD(summary.yourShareCents)}</dd>
                   </div>
                 </dl>
@@ -265,7 +265,7 @@ export default function MoneyPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-3xl border border-ink bg-mint-dim px-5 py-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.08em]">Money in</p>
+                <p className="text-sm font-semibold">Money in</p>
                 <p className="mt-1 font-display text-3xl sm:text-4xl tabular-nums">
                   {formatUSD(summary.incomeCents)}
                 </p>
@@ -274,7 +274,7 @@ export default function MoneyPage() {
                 href="/accounts"
                 className="group rounded-3xl border border-ink bg-lavender px-5 py-4 transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sun"
               >
-                <p className="text-xs font-semibold uppercase tracking-[0.08em] flex justify-between">
+                <p className="text-sm font-semibold flex justify-between">
                   Net balance
                   <span className="transition-transform group-hover:translate-x-0.5">
                     <Chevron direction="right" className="w-4 h-4" />
@@ -290,7 +290,7 @@ export default function MoneyPage() {
           {/* ── Where it went ─────────────────────────────────────────────── */}
           {summary.byCategory.length > 0 && (
             <section aria-labelledby="where-heading" className="space-y-3">
-              <h2 id="where-heading" className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-ink-muted">
+              <h2 id="where-heading" className="px-1 text-sm font-semibold text-ink-muted">
                 Where it went
               </h2>
               <ul className="rounded-3xl border border-ink divide-y divide-rim overflow-hidden">
@@ -397,7 +397,7 @@ export default function MoneyPage() {
               )}
             </div>
 
-            <p className="px-1 pt-2 text-xs font-semibold uppercase tracking-[0.08em] text-ink-muted">
+            <p className="px-1 pt-2 text-sm font-semibold text-ink-muted">
               {q
                 ? `${visible.length} match${visible.length === 1 ? "" : "es"} across all months`
                 : `${monthName(month, false)} · ${visible.length} transaction${visible.length === 1 ? "" : "s"}`}

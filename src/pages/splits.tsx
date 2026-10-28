@@ -563,7 +563,7 @@ export default function SplitsPage() {
           <div className="space-y-6">
             {groups.map(({ month, rows }) => (
               <div key={month}>
-                <h2 className="px-4 pb-2 text-xs font-semibold uppercase tracking-[0.08em] text-ink-muted">
+                <h2 className="px-4 pb-2 text-sm font-semibold text-ink-muted">
                   {month}
                 </h2>
                 <ul className="rounded-3xl border border-ink overflow-hidden divide-y divide-rim">

@@ -79,7 +79,7 @@ export function BreakdownCard({
 
   return (
     <section className="space-y-3">
-      <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-ink-muted">
+      <h2 className="text-sm font-semibold text-ink-muted">
         Each share
       </h2>
 

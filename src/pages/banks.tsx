@@ -71,7 +71,7 @@ export default function BanksPage() {
           {/* ── Net balance + actions ───────────────────────────────────── */}
           {items.length > 0 && (
             <div className="rounded-3xl border border-ink bg-lavender px-6 pt-4 pb-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.08em]">Net balance</p>
+              <p className="text-sm font-semibold">Net balance</p>
               <p className="mt-1 font-display text-7xl sm:text-8xl tabular-nums leading-none">
                 {formatUSD(netBalance(allAccounts))}
               </p>
@@ -104,8 +104,7 @@ export default function BanksPage() {
               />
             ) : (
               <p className="text-sm rounded-2xl border border-ink bg-sun/40 px-4 py-2.5">
-                Plaid isn’t set up. Add your keys to <code className="font-mono">.env.local</code> (see{" "}
-                <code className="font-mono">.env.example</code>) and restart the app.
+                Bank linking isn’t set up yet: the app is missing its Plaid keys.
               </p>
             )}
             {items.length > 1 && (
