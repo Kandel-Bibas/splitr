@@ -12,14 +12,13 @@
     // so they cost no Worker time or requests.
     "run_worker_first": ["/api/*"]
   },
-  // The app is only reachable at its own domain, where Cloudflare Access asks
-  // for a login. The default *.workers.dev and preview addresses would skip
-  // that login, so they stay off.
+  // The app is only reachable at its own domain, the URL Supabase sends sign-in
+  // links to. The default *.workers.dev and preview addresses stay off.
   "workers_dev": false,
   "preview_urls": false,
   "routes": [
     {
-      "pattern": "money.aditya24sharma.dev",
+      "pattern": "splitr.bibas.dev",
       "custom_domain": true
     }
   ],
@@ -29,13 +28,14 @@
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",
-      // Created when the app is deployed (build step 4); not yet
-      "id": "00000000000000000000000000000000",
+      "id": "a3dce64c6ba94b4e8be68c5472865347",
       "localConnectionString": "postgres://postgres:postgres@localhost:54329/postgres"
     }
   ],
   "vars": {
-    "SUPABASE_URL": "https://hmevfdykiyglpwmwbpau.supabase.co"
+    "SUPABASE_URL": "https://hmevfdykiyglpwmwbpau.supabase.co",
+    // Real banks; PLAID_CLIENT_ID and PLAID_SECRET (the production one) are secrets
+    "PLAID_ENV": "production"
   },
   "observability": {
     "enabled": true
