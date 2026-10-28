@@ -24,3 +24,8 @@ Skip anything ESLint, `tsc`, or Prettier already catches exactly. A rule earns a
 call only when it must tell apart two things that look alike. New rules stay
 `severity = "info"` until `jevlint calibrate` covers them with a clear positive and a
 hard negative.
+
+## Database
+
+- `npm run test:db` runs the row-security tests against a local Supabase Postgres in Docker; one-time setup is in test/db/setup.ts. It is not part of `npm test`.
+- The Homebrew Supabase CLI is killed by macOS at launch (invalid signature); use the supabase/postgres Docker image for local work.

@@ -1,24 +1,24 @@
 import { Hono } from 'hono'
 import { and, asc, desc, eq, ne } from 'drizzle-orm'
 import type { AppEnv } from '../app'
-import { getDb } from '../db'
 import { person } from '../db/schema'
-import { readJson } from '../http'
+import { isUuid, readJson } from '../http'
 
 export const people = new Hono<AppEnv>()
 
+// Your contacts. Row security also shows the people in splits friends share
+// with you; those aren't yours to list or pick from.
 people.get('/', async (c) => {
-  const db = getDb(c.env.DB)
-  const rows = await db
+  const rows = await c.var.db
     .select()
     .from(person)
-    .where(eq(person.archived, false))
+    .where(and(eq(person.ownerId, c.var.user.sub), eq(person.archived, false)))
     .orderBy(desc(person.isDefault), asc(person.name))
   return c.json(rows)
 })
 
 people.post('/', async (c) => {
-  const db = getDb(c.env.DB)
+  const db = c.var.db
   const body = await readJson(c)
   if (body instanceof Response) return body
   const { name, colorHex, isDefault } = (body ?? {}) as Record<string, unknown>
@@ -39,8 +39,9 @@ people.post('/', async (c) => {
 })
 
 people.patch('/:id', async (c) => {
-  const db = getDb(c.env.DB)
+  const db = c.var.db
   const id = c.req.param('id')
+  if (!isUuid(id)) return c.json({ error: 'Person not found' }, 404)
   const body = await readJson(c)
   if (body instanceof Response) return body
   const { name, colorHex, isDefault, isMe, archived } = (body ?? {}) as Record<string, unknown>
@@ -64,7 +65,7 @@ people.patch('/:id', async (c) => {
   const [updated] =
     Object.keys(data).length > 0
       ? await db.update(person).set(data).where(eq(person.id, id)).returning()
-      : await db.select().from(person).where(eq(person.id, id))
+      : await db.select().from(person).where(and(eq(person.id, id), eq(person.ownerId, c.var.user.sub)))
   if (!updated) return c.json({ error: 'Person not found' }, 404)
   // Only one person can be you
   if (isMe === true) await db.update(person).set({ isMe: false }).where(and(ne(person.id, id), eq(person.isMe, true)))
@@ -73,11 +74,12 @@ people.patch('/:id', async (c) => {
 
 // Archive, not delete: past splits still name this person
 people.delete('/:id', async (c) => {
-  const db = getDb(c.env.DB)
-  const [archivedRow] = await db
+  const id = c.req.param('id')
+  if (!isUuid(id)) return c.json({ error: 'Person not found' }, 404)
+  const [archivedRow] = await c.var.db
     .update(person)
     .set({ archived: true })
-    .where(eq(person.id, c.req.param('id')))
+    .where(eq(person.id, id))
     .returning()
   if (!archivedRow) return c.json({ error: 'Person not found' }, 404)
   return c.json(archivedRow)

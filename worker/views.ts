@@ -7,6 +7,13 @@ import { item } from './db/schema'
 // Row loading and JSON shapes shared by the API routes. The shapes match what
 // the API returned when it ran on Prisma, which the pages depend on.
 
+const INT4_MAX = 2_147_483_647
+
+/** Whether a request value fits a Postgres integer column; anything else would fail the statement. */
+export function isInt4(value: unknown): value is number {
+  return Number.isInteger(value) && Math.abs(value as number) <= INT4_MAX
+}
+
 // ---------------------------------------------------------------------------
 // Splits
 // ---------------------------------------------------------------------------
@@ -21,9 +28,9 @@ export const EXPENSE_WITH = {
 
 type ExpenseRow = NonNullable<Awaited<ReturnType<typeof findExpense>>>
 
-export function findExpense(db: Db, id: string) {
+export function findExpense(db: Db, ownerId: string, id: string) {
   return db.query.expense.findFirst({
-    where: (e, { eq }) => eq(e.id, id),
+    where: (e, { and, eq }) => and(eq(e.id, id), eq(e.ownerId, ownerId)),
     with: EXPENSE_WITH,
   })
 }
@@ -77,9 +84,9 @@ export const TX_WITH = {
 
 type TxRow = NonNullable<Awaited<ReturnType<typeof findTx>>>
 
-export function findTx(db: Db, id: number) {
+export function findTx(db: Db, ownerId: string, id: number) {
   return db.query.transaction.findFirst({
-    where: (t, { eq }) => eq(t.id, id),
+    where: (t, { and, eq }) => and(eq(t.id, id), eq(t.ownerId, ownerId)),
     with: TX_WITH,
   })
 }

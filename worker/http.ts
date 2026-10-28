@@ -9,8 +9,13 @@ export async function readJson(c: Context): Promise<unknown | Response> {
   }
 }
 
-/** D1's message for a UNIQUE constraint failure, the way Prisma's P2002 was. */
-export function isUniqueViolation(e: unknown): boolean {
-  const msg = e instanceof Error ? `${e.message} ${String(e.cause ?? '')}` : ''
-  return msg.includes('UNIQUE constraint failed')
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Whether a path id can be a split, person, item or tag id. Check before
+ * querying: Postgres rejects a malformed uuid with an error, which would
+ * abort the request's transaction, where "not found" is the right answer.
+ */
+export function isUuid(id: string): boolean {
+  return UUID.test(id)
 }

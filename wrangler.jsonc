@@ -23,14 +23,20 @@
       "custom_domain": true
     }
   ],
-  "d1_databases": [
+  // Postgres on Supabase, reached through Hyperdrive's connection pool.
+  // Locally, `wrangler dev` and the tests use localConnectionString instead
+  // (the Docker database from test/db/setup.ts).
+  "hyperdrive": [
     {
-      "binding": "DB",
-      "database_name": "splitr",
-      "database_id": "8dca0d2b-ce1b-4a48-99b8-c037737cd0d9",
-      "migrations_dir": "migrations"
+      "binding": "HYPERDRIVE",
+      // Created when the app is deployed (build step 4); not yet
+      "id": "00000000000000000000000000000000",
+      "localConnectionString": "postgres://postgres:postgres@localhost:54329/postgres"
     }
   ],
+  "vars": {
+    "SUPABASE_URL": "https://hmevfdykiyglpwmwbpau.supabase.co"
+  },
   "observability": {
     "enabled": true
   }

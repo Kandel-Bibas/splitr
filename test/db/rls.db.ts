@@ -13,8 +13,11 @@ import { asUser } from '../../worker/db/as-user'
 // One connection, so a request's settings would still be on it for the next one
 const sql = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} })
 
+// The tests write raw SQL, so they reach through Drizzle to the transaction's
+// own postgres.js client: the same connection and settings asUser set up
 const as = <T>(userId: string, fn: (tx: TransactionSql) => Promise<T>) =>
-  asUser(sql, { sub: userId, role: 'authenticated' }, fn)
+  asUser(sql, { sub: userId, role: 'authenticated' }, (db) =>
+    fn((db as unknown as { session: { client: TransactionSql } }).session.client))
 
 async function newUser(email: string): Promise<string> {
   const [row] = await sql`insert into auth.users (id, email) values (gen_random_uuid(), ${email}) returning id`

@@ -1,7 +1,9 @@
+import { and, eq, sql } from 'drizzle-orm'
 import { toCents } from '@/lib/money'
 import { todayLocal } from '@/lib/spending'
 import type { Db } from './db'
 import { plaidItem } from './db/schema'
+import { decryptToken } from './token-crypto'
 import { PlaidApiError, PlaidConfigError, describeError, plaid, type PlaidAccount, type PlaidTransaction } from './plaid'
 
 export interface SyncResult {
@@ -31,48 +33,53 @@ export function accountFields(acct: PlaidAccount) {
 }
 
 // Each statement below takes a whole list as one JSON parameter and reads it
-// with json_each, so a sync is a handful of statements however many
-// transactions it brings. D1 allows 50 queries per request on the free plan,
-// and a first sync can bring hundreds.
+// with jsonb_to_recordset (or jsonb_array_elements_text), so a sync is a
+// handful of statements however many transactions it brings; a first sync
+// can bring hundreds. They run as the signed-in user, so row security keeps
+// them to that user's banks and the joins can only find their accounts.
 //
-// They are D1 statements rather than Drizzle ones: Drizzle can't put a raw
-// SQL statement with parameters into a batch.
+// A statement may not touch the same row twice, so repeated ids in a list
+// are collapsed first, the last one winning.
 
-export function upsertAccounts(d1: D1Database, itemId: number, accounts: PlaidAccount[], updatedAt: string) {
-  const rows = accounts.map((a) => ({ plaidAccountId: a.account_id, ...accountFields(a) }))
-  return d1.prepare(`
-    INSERT INTO "Account" ("plaidAccountId", "itemId", "name", "officialName", "mask", "type", "subtype",
+const lastById = <T>(rows: T[], id: (row: T) => string) => [...new Map(rows.map((r) => [id(r), r])).values()]
+
+export async function upsertAccounts(db: Db, itemId: number, accounts: PlaidAccount[], updatedAt: string) {
+  const rows = lastById(accounts, (a) => a.account_id).map((a) => ({ plaidAccountId: a.account_id, ...accountFields(a) }))
+  await db.execute(sql`
+    INSERT INTO splitr."Account" ("plaidAccountId", "itemId", "name", "officialName", "mask", "type", "subtype",
       "currentBalance", "availableBalance", "isoCurrencyCode", "updatedAt")
-    SELECT j.value ->> 'plaidAccountId', ?, j.value ->> 'name', j.value ->> 'officialName',
-      j.value ->> 'mask', j.value ->> 'type', j.value ->> 'subtype', j.value ->> 'currentBalance',
-      j.value ->> 'availableBalance', j.value ->> 'isoCurrencyCode', ?
-    FROM json_each(?) j WHERE true
+    SELECT j."plaidAccountId", ${itemId}::integer, j."name", j."officialName", j."mask", j."type", j."subtype",
+      j."currentBalance", j."availableBalance", j."isoCurrencyCode", ${updatedAt}::timestamptz
+    FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS j("plaidAccountId" text, "name" text,
+      "officialName" text, "mask" text, "type" text, "subtype" text, "currentBalance" integer,
+      "availableBalance" integer, "isoCurrencyCode" text)
     ON CONFLICT ("plaidAccountId") DO UPDATE SET
       "name" = excluded."name", "officialName" = excluded."officialName", "mask" = excluded."mask",
       "type" = excluded."type", "subtype" = excluded."subtype", "currentBalance" = excluded."currentBalance",
       "availableBalance" = excluded."availableBalance", "isoCurrencyCode" = excluded."isoCurrencyCode",
-      "updatedAt" = excluded."updatedAt"`).bind(itemId, updatedAt, JSON.stringify(rows))
+      "updatedAt" = excluded."updatedAt"`)
 }
 
 /** One balance per account per day; a repeat sync the same day keeps the latest. */
-export function upsertSnapshots(d1: D1Database, accounts: PlaidAccount[], date: string) {
-  const rows = accounts.map((a) => ({
+export async function upsertSnapshots(db: Db, accounts: PlaidAccount[], date: string) {
+  const rows = lastById(accounts, (a) => a.account_id).map((a) => ({
     plaidAccountId: a.account_id,
     currentBalance: cents(a.balances.current),
     availableBalance: cents(a.balances.available),
   }))
-  return d1.prepare(`
-    INSERT INTO "BalanceSnapshot" ("accountId", "date", "currentBalance", "availableBalance")
-    SELECT a."id", ?, j.value ->> 'currentBalance', j.value ->> 'availableBalance'
-    FROM json_each(?) j
-    JOIN "Account" a ON a."plaidAccountId" = j.value ->> 'plaidAccountId' WHERE true
+  await db.execute(sql`
+    INSERT INTO splitr."BalanceSnapshot" ("accountId", "date", "currentBalance", "availableBalance")
+    SELECT a."id", ${date}::text, j."currentBalance", j."availableBalance"
+    FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS j("plaidAccountId" text,
+      "currentBalance" integer, "availableBalance" integer)
+    JOIN splitr."Account" a ON a."plaidAccountId" = j."plaidAccountId"
     ON CONFLICT ("accountId", "date") DO UPDATE SET
-      "currentBalance" = excluded."currentBalance", "availableBalance" = excluded."availableBalance"`).bind(date, JSON.stringify(rows))
+      "currentBalance" = excluded."currentBalance", "availableBalance" = excluded."availableBalance"`)
 }
 
 /** Transactions on accounts we don't know are skipped by the JOIN. */
-export function upsertTransactions(d1: D1Database, txs: PlaidTransaction[], createdAt: string) {
-  const rows = txs.map((tx) => ({
+export async function upsertTransactions(db: Db, txs: PlaidTransaction[], createdAt: string) {
+  const rows = lastById(txs, (tx) => tx.transaction_id).map((tx) => ({
     plaidTransactionId: tx.transaction_id,
     plaidAccountId: tx.account_id,
     date: tx.date,
@@ -81,23 +88,24 @@ export function upsertTransactions(d1: D1Database, txs: PlaidTransaction[], crea
     merchantName: tx.merchant_name ?? null,
     categoryPrimary: tx.personal_finance_category?.primary ?? null,
     categoryDetailed: tx.personal_finance_category?.detailed ?? null,
-    pending: tx.pending ? 1 : 0,
+    pending: tx.pending,
     isoCurrencyCode: tx.iso_currency_code ?? 'USD',
   }))
   // Never touches userCategory, so your recategorizing survives syncs
-  return d1.prepare(`
-    INSERT INTO "Transaction" ("source", "plaidTransactionId", "accountId", "date", "amount", "name",
+  await db.execute(sql`
+    INSERT INTO splitr."Transaction" ("source", "plaidTransactionId", "accountId", "date", "amount", "name",
       "merchantName", "categoryPrimary", "categoryDetailed", "pending", "isoCurrencyCode", "createdAt")
-    SELECT 'PLAID', j.value ->> 'plaidTransactionId', a."id", j.value ->> 'date', j.value ->> 'amount',
-      j.value ->> 'name', j.value ->> 'merchantName', j.value ->> 'categoryPrimary',
-      j.value ->> 'categoryDetailed', j.value ->> 'pending', j.value ->> 'isoCurrencyCode', ?
-    FROM json_each(?) j
-    JOIN "Account" a ON a."plaidAccountId" = j.value ->> 'plaidAccountId' WHERE true
+    SELECT 'PLAID', j."plaidTransactionId", a."id", j."date", j."amount", j."name", j."merchantName",
+      j."categoryPrimary", j."categoryDetailed", j."pending", j."isoCurrencyCode", ${createdAt}::timestamptz
+    FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS j("plaidTransactionId" text,
+      "plaidAccountId" text, "date" text, "amount" integer, "name" text, "merchantName" text,
+      "categoryPrimary" text, "categoryDetailed" text, "pending" boolean, "isoCurrencyCode" text)
+    JOIN splitr."Account" a ON a."plaidAccountId" = j."plaidAccountId"
     ON CONFLICT ("plaidTransactionId") DO UPDATE SET
       "accountId" = excluded."accountId", "date" = excluded."date", "amount" = excluded."amount",
       "name" = excluded."name", "merchantName" = excluded."merchantName",
       "categoryPrimary" = excluded."categoryPrimary", "categoryDetailed" = excluded."categoryDetailed",
-      "pending" = excluded."pending", "isoCurrencyCode" = excluded."isoCurrencyCode"`).bind(createdAt, JSON.stringify(rows))
+      "pending" = excluded."pending", "isoCurrencyCode" = excluded."isoCurrencyCode"`)
 }
 
 /**
@@ -105,35 +113,33 @@ export function upsertTransactions(d1: D1Database, txs: PlaidTransaction[], crea
  * a new one pointing back at it. Moves any split to the posted one before the
  * pending row is deleted. A posted charge that already has a split keeps it.
  */
-export function moveSplitsToPosted(d1: D1Database, pairs: { pending: string; posted: string }[]) {
-  const json = JSON.stringify(pairs)
-  return d1.prepare(`
-    UPDATE "Expense" SET "transactionId" = (
-      SELECT posted."id" FROM json_each(?) j
-      JOIN "Transaction" pend ON pend."plaidTransactionId" = j.value ->> 'pending'
-      JOIN "Transaction" posted ON posted."plaidTransactionId" = j.value ->> 'posted'
-      WHERE pend."id" = "Expense"."transactionId"
-        AND NOT EXISTS (SELECT 1 FROM "Expense" e2 WHERE e2."transactionId" = posted."id"))
-    WHERE "transactionId" IN (
-      SELECT pend."id" FROM json_each(?) j
-      JOIN "Transaction" pend ON pend."plaidTransactionId" = j.value ->> 'pending')`).bind(json, json)
+export async function moveSplitsToPosted(db: Db, pairs: { pending: string; posted: string }[]) {
+  await db.execute(sql`
+    UPDATE splitr."Expense" e SET "transactionId" = po."id"
+    FROM jsonb_to_recordset(${JSON.stringify(pairs)}::jsonb) AS j("pending" text, "posted" text)
+    JOIN splitr."Transaction" pe ON pe."plaidTransactionId" = j."pending"
+    JOIN splitr."Transaction" po ON po."plaidTransactionId" = j."posted"
+    WHERE e."transactionId" = pe."id"
+      AND NOT EXISTS (SELECT 1 FROM splitr."Expense" e2 WHERE e2."transactionId" = po."id")`)
 }
 
 /** A split made from a removed transaction stays; its link is cleared. */
-export function deleteTransactions(d1: D1Database, plaidIds: string[]) {
-  return d1.prepare(`
-    DELETE FROM "Transaction"
-    WHERE "plaidTransactionId" IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(plaidIds))
+export async function deleteTransactions(db: Db, plaidIds: string[]) {
+  await db.execute(sql`
+    DELETE FROM splitr."Transaction"
+    WHERE "plaidTransactionId" IN (SELECT jsonb_array_elements_text(${JSON.stringify(plaidIds)}::jsonb))`)
 }
 
-/** Syncs one bank. Its failure is logged and returned, so it doesn't stop the others. */
-export async function syncItem(db: Db, itemDbId: number): Promise<SyncResult> {
-  const item = await db.query.plaidItem.findFirst({ where: (i, { eq }) => eq(i.id, itemDbId) })
+/** Syncs one of the user's banks. Its failure is logged and returned, so it doesn't stop the others. */
+export async function syncItem(db: Db, userId: string, itemDbId: number, tokenKey: string): Promise<SyncResult> {
+  const item = await db.query.plaidItem.findFirst({
+    where: (i, { and, eq }) => and(eq(i.id, itemDbId), eq(i.ownerId, userId)),
+  })
   if (!item) throw new Error(`Plaid item ${itemDbId} not found`)
 
   const base = { itemId: item.id, institutionName: item.institutionName }
   try {
-    return { ...base, ...(await pullItem(db, item)) }
+    return { ...base, ...(await pullItem(db, item, tokenKey)) }
   } catch (error) {
     if (error instanceof PlaidConfigError) throw error
     console.error(`[plaid] sync ${item.institutionName ?? 'bank'} (item ${item.id}) failed: ${describeError(error)}`, error)
@@ -142,8 +148,9 @@ export async function syncItem(db: Db, itemDbId: number): Promise<SyncResult> {
   }
 }
 
-async function pullItem(db: Db, item: typeof plaidItem.$inferSelect) {
-  const { accounts } = await plaid.accountsGet(item.accessToken)
+async function pullItem(db: Db, item: typeof plaidItem.$inferSelect, tokenKey: string) {
+  const accessToken = await decryptToken(item.accessToken, item.itemId, tokenKey)
+  const { accounts } = await plaid.accountsGet(accessToken)
 
   const added: PlaidTransaction[] = []
   const modified: PlaidTransaction[] = []
@@ -154,7 +161,7 @@ async function pullItem(db: Db, item: typeof plaidItem.$inferSelect) {
   while (hasMore) {
     let resp
     try {
-      resp = await plaid.transactionsSync(item.accessToken, cursor)
+      resp = await plaid.transactionsSync(accessToken, cursor)
     } catch (error) {
       // Right after linking Plaid is still pulling history and returns
       // PRODUCT_NOT_READY. Treat it as "no data yet"; the cursor is left
@@ -171,8 +178,9 @@ async function pullItem(db: Db, item: typeof plaidItem.$inferSelect) {
     if (pages > 50) break
   }
 
-  // Everything for this bank is written in one batch: if any part fails,
-  // nothing changes and the cursor stays put, so the next sync retries it all.
+  // Everything for this bank is written in one savepoint: if any part fails,
+  // nothing changes and the cursor stays put, so the next sync retries it all,
+  // and the request's transaction stays usable for the other banks.
   const now = new Date().toISOString()
   const pendingPairs = added
     .filter((tx) => tx.pending_transaction_id)
@@ -180,22 +188,21 @@ async function pullItem(db: Db, item: typeof plaidItem.$inferSelect) {
   const removedIds = removed.map((r) => r.transaction_id).filter(Boolean)
   const changed = [...added, ...modified]
 
-  const d1 = db.$client
-  await d1.batch([
-    upsertAccounts(d1, item.id, accounts, now),
-    upsertSnapshots(d1, accounts, todayLocal()),
-    ...(changed.length > 0 ? [upsertTransactions(d1, changed, now)] : []),
-    ...(pendingPairs.length > 0 ? [moveSplitsToPosted(d1, pendingPairs)] : []),
-    ...(removedIds.length > 0 ? [deleteTransactions(d1, removedIds)] : []),
-    d1.prepare('UPDATE "PlaidItem" SET "cursor" = ? WHERE "id" = ?').bind(cursor ?? null, item.id),
-  ])
+  await db.transaction(async (tx) => {
+    await upsertAccounts(tx, item.id, accounts, now)
+    await upsertSnapshots(tx, accounts, todayLocal())
+    if (changed.length > 0) await upsertTransactions(tx, changed, now)
+    if (pendingPairs.length > 0) await moveSplitsToPosted(tx, pendingPairs)
+    if (removedIds.length > 0) await deleteTransactions(tx, removedIds)
+    await tx.update(plaidItem).set({ cursor: cursor ?? null }).where(and(eq(plaidItem.id, item.id), eq(plaidItem.ownerId, item.ownerId)))
+  })
 
   return { added: added.length, modified: modified.length, removed: removed.length }
 }
 
-export async function syncAllItems(db: Db): Promise<SyncResult[]> {
-  const items = await db.select({ id: plaidItem.id }).from(plaidItem)
+export async function syncAllItems(db: Db, userId: string, tokenKey: string): Promise<SyncResult[]> {
+  const items = await db.select({ id: plaidItem.id }).from(plaidItem).where(eq(plaidItem.ownerId, userId)).orderBy(plaidItem.id)
   const results: SyncResult[] = []
-  for (const item of items) results.push(await syncItem(db, item.id))
+  for (const item of items) results.push(await syncItem(db, userId, item.id, tokenKey))
   return results
 }

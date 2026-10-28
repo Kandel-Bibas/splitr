@@ -1,46 +1,44 @@
-import { relations } from 'drizzle-orm'
-import { customType, integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { relations, sql } from 'drizzle-orm'
+import { boolean, doublePrecision, integer, pgSchema, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 
-// Mirrors the tables in migrations/ (0001_init.sql was first created by
-// Prisma); names and column types must keep matching them.
+// Mirrors supabase/migrations; names and column types must keep matching them.
+//
+// "ownerId" is on every table but never written here: Postgres fills it from
+// the signed-in user, and row security keeps each query to that user's rows
+// (plus splits shared with them). See worker/db/as-user.ts.
 
-/**
- * DATETIME columns hold ISO text. Rows written by different tools use either
- * "…Z" or "…+00:00"; both read back as a Date, and a Date goes to JSON as
- * "…Z", which is the shape the API has always returned.
- */
-const dateTime = customType<{ data: Date; driverData: string }>({
-  dataType: () => 'DATETIME',
-  toDriver: (d) => d.toISOString(),
-  fromDriver: (v) => new Date(v),
-})
+const splitr = pgSchema('splitr')
 
-const bool = (name: string) => integer(name, { mode: 'boolean' })
-const newId = () => crypto.randomUUID()
-const now = () => new Date()
+const dateTime = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' })
+const ownerId = () => uuid('ownerId').notNull().default(sql`auth.uid()`)
 
 // ---------------------------------------------------------------------------
 // Splits
 // ---------------------------------------------------------------------------
 
-export const person = sqliteTable('Person', {
-  id: text('id').primaryKey().$defaultFn(newId),
+export const person = splitr.table('Person', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ownerId: ownerId(),
   name: text('name').notNull(),
   colorHex: text('colorHex').notNull().default('#64748b'),
-  isDefault: bool('isDefault').notNull().default(false),
+  isDefault: boolean('isDefault').notNull().default(false),
   // The person who owns the linked bank accounts; at most one
-  isMe: bool('isMe').notNull().default(false),
-  archived: bool('archived').notNull().default(false),
-  createdAt: dateTime('createdAt').notNull().$defaultFn(now),
+  isMe: boolean('isMe').notNull().default(false),
+  archived: boolean('archived').notNull().default(false),
+  // The Splitr user this contact is, once they accept an invite; only the
+  // Worker's admin path sets it
+  linkedUserId: uuid('linkedUserId'),
+  createdAt: dateTime('createdAt').notNull().defaultNow(),
 })
 
-export const expense = sqliteTable('Expense', {
-  id: text('id').primaryKey().$defaultFn(newId),
+export const expense = splitr.table('Expense', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ownerId: ownerId(),
   type: text('type', { enum: ['ITEMIZED', 'SIMPLE'] }).notNull(),
   description: text('description').notNull().default(''),
   store: text('store'),
   purchasedAt: dateTime('purchasedAt'),
-  payerId: text('payerId').notNull(),
+  payerId: uuid('payerId').notNull(),
   subtotalCents: integer('subtotalCents').notNull().default(0),
   taxCents: integer('taxCents').notNull().default(0),
   // Itemized only: driver tip + fees (>= 0), discounts (<= 0), refunds (<= 0)
@@ -49,52 +47,57 @@ export const expense = sqliteTable('Expense', {
   refundCents: integer('refundCents').notNull().default(0),
   totalCents: integer('totalCents').notNull(),
   splitMethod: text('splitMethod', { enum: ['EVEN', 'EXACT', 'ITEMIZED'] }).notNull(),
-  loggedToSplitwise: bool('loggedToSplitwise').notNull().default(false),
+  loggedToSplitwise: boolean('loggedToSplitwise').notNull().default(false),
   imagePath: text('imagePath'),
-  createdAt: dateTime('createdAt').notNull().$defaultFn(now),
+  createdAt: dateTime('createdAt').notNull().defaultNow(),
   // The bank or hand-added transaction this split was made from, if any
   transactionId: integer('transactionId'),
   // The online order it was imported from ("walmart-<id>"); unique
   orderRef: text('orderRef'),
 })
 
-export const tag = sqliteTable('Tag', {
-  id: text('id').primaryKey().$defaultFn(newId),
+export const tag = splitr.table('Tag', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ownerId: ownerId(),
   name: text('name').notNull(),
 })
 
-/** Prisma's implicit many-to-many table: A = Expense.id, B = Tag.id */
-export const expenseToTag = sqliteTable('_ExpenseToTag', {
-  A: text('A').notNull(),
-  B: text('B').notNull(),
+/** A = Expense.id, B = Tag.id (the Prisma-era names) */
+export const expenseToTag = splitr.table('_ExpenseToTag', {
+  A: uuid('A').notNull(),
+  B: uuid('B').notNull(),
+  ownerId: ownerId(),
 })
 
-export const item = sqliteTable('Item', {
-  id: text('id').primaryKey().$defaultFn(newId),
-  expenseId: text('expenseId').notNull(),
+export const item = splitr.table('Item', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ownerId: ownerId(),
+  expenseId: uuid('expenseId').notNull(),
   rawName: text('rawName'),
   name: text('name').notNull(),
-  quantity: real('quantity').notNull().default(1),
+  quantity: doublePrecision('quantity').notNull().default(1),
   unitPriceCents: integer('unitPriceCents').notNull(),
   lineTotalCents: integer('lineTotalCents').notNull(),
   sortOrder: integer('sortOrder').notNull(),
-  returned: bool('returned').notNull().default(false),
+  returned: boolean('returned').notNull().default(false),
 })
 
-export const itemAssignment = sqliteTable(
+export const itemAssignment = splitr.table(
   'ItemAssignment',
   {
-    itemId: text('itemId').notNull(),
-    personId: text('personId').notNull(),
+    itemId: uuid('itemId').notNull(),
+    personId: uuid('personId').notNull(),
+    ownerId: ownerId(),
   },
   (t) => [primaryKey({ columns: [t.itemId, t.personId] })],
 )
 
-export const expenseParticipant = sqliteTable(
+export const expenseParticipant = splitr.table(
   'ExpenseParticipant',
   {
-    expenseId: text('expenseId').notNull(),
-    personId: text('personId').notNull(),
+    expenseId: uuid('expenseId').notNull(),
+    personId: uuid('personId').notNull(),
+    ownerId: ownerId(),
     exactAmountCents: integer('exactAmountCents'),
   },
   (t) => [primaryKey({ columns: [t.expenseId, t.personId] })],
@@ -104,20 +107,23 @@ export const expenseParticipant = sqliteTable(
 // Money: linked banks and spending
 // ---------------------------------------------------------------------------
 
-export const plaidItem = sqliteTable('PlaidItem', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+export const plaidItem = splitr.table('PlaidItem', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  ownerId: ownerId(),
   itemId: text('itemId').notNull(),
+  // AES-GCM ciphertext (worker/token-crypto.ts), never the token itself
   accessToken: text('accessToken').notNull(),
   institutionId: text('institutionId'),
   institutionName: text('institutionName'),
   institutionLogo: text('institutionLogo'),
   institutionColor: text('institutionColor'),
   cursor: text('cursor'),
-  createdAt: dateTime('createdAt').notNull().$defaultFn(now),
+  createdAt: dateTime('createdAt').notNull().defaultNow(),
 })
 
-export const account = sqliteTable('Account', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+export const account = splitr.table('Account', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  ownerId: ownerId(),
   plaidAccountId: text('plaidAccountId').notNull(),
   itemId: integer('itemId').notNull(),
   name: text('name').notNull(),
@@ -129,11 +135,12 @@ export const account = sqliteTable('Account', {
   currentBalance: integer('currentBalance'),
   availableBalance: integer('availableBalance'),
   isoCurrencyCode: text('isoCurrencyCode').notNull().default('USD'),
-  updatedAt: dateTime('updatedAt').notNull().$defaultFn(now),
+  updatedAt: dateTime('updatedAt').notNull().defaultNow(),
 })
 
-export const transaction = sqliteTable('Transaction', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+export const transaction = splitr.table('Transaction', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  ownerId: ownerId(),
   source: text('source', { enum: ['PLAID', 'MANUAL'] }).notNull().default('PLAID'),
   plaidTransactionId: text('plaidTransactionId'),
   // Null for hand-added (cash) transactions
@@ -148,14 +155,15 @@ export const transaction = sqliteTable('Transaction', {
   categoryDetailed: text('categoryDetailed'),
   // Your pick, which wins over the bank's category; sync never touches it
   userCategory: text('userCategory'),
-  pending: bool('pending').notNull().default(false),
+  pending: boolean('pending').notNull().default(false),
   isoCurrencyCode: text('isoCurrencyCode').notNull().default('USD'),
-  createdAt: dateTime('createdAt').notNull().$defaultFn(now),
+  createdAt: dateTime('createdAt').notNull().defaultNow(),
 })
 
 // One row per account per local day, written at each sync
-export const balanceSnapshot = sqliteTable('BalanceSnapshot', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+export const balanceSnapshot = splitr.table('BalanceSnapshot', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  ownerId: ownerId(),
   accountId: integer('accountId').notNull(),
   date: text('date').notNull(),
   currentBalance: integer('currentBalance'),

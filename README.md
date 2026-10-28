@@ -5,8 +5,9 @@ hand-added expenses land in **Money**; any charge can be split with friends,
 and your share comes off what you spent. Splits give clean per-person amounts
 to copy into Splitwise.
 
-Runs on Cloudflare Workers with a D1 (SQLite) database, behind Cloudflare
-Access so only you can open it. Single user, no accounts.
+Runs on Cloudflare Workers with Supabase for sign-in and Postgres. Invite
+only: each person has their own banks, people and splits, and Postgres row
+security keeps every query to the signed-in user's rows.
 
 ---
 
@@ -16,7 +17,10 @@ Access so only you can open it. Single user, no accounts.
   files that Cloudflare serves directly, without running any code.
 - **`worker/`** — the API (Hono), the only code that runs on Cloudflare.
   Every route is under `/api`; `wrangler.jsonc` sends only those to the Worker.
-- **`worker/db/schema.ts`** — the D1 tables, described for Drizzle.
+  Each request must carry a Supabase login (`worker/auth.ts`) and runs as one
+  Postgres transaction as that user (`worker/db/as-user.ts`).
+- **`supabase/migrations/`** — the Postgres tables and row-security rules.
+- **`worker/db/schema.ts`** — the same tables, described for Drizzle.
 - **`lib/`** — shared logic with no framework in it: the split math, money,
   spending summaries, input validation. Covered by `npm test`.
 
@@ -24,64 +28,60 @@ Access so only you can open it. Single user, no accounts.
 
 ## Develop locally
 
-Requires Node.js 22+.
+Requires Node.js 22+, and Docker for `npm run test:db`.
 
 ```bash
 npm install
-cp .env.example .dev.vars     # add your Plaid keys
-npm run db:migrate:local      # create the tables in a local D1 copy (.wrangler/)
+cp .env.example .dev.vars     # add your Plaid keys and PLAID_TOKEN_KEY
 npm run dev                   # http://localhost:5173
 ```
 
 `npm run dev` runs the React app and the API together, with the API inside
-Cloudflare's runtime and a local D1 database. To try the production build
-locally, run `npm run preview`.
+Cloudflare's runtime. Sign-in always goes through the hosted Supabase project,
+so the API's database must be that project's too: the local Docker database
+in `wrangler.jsonc` has none of its users, and writes there fail. Until that
+is wired up, test API changes with `npm run test:db`. To try the production
+build locally, run `npm run preview`.
 
 ### Changing the database
 
-Write the change as SQL, then describe it in `worker/db/schema.ts`:
+Write the change as a new SQL file in `supabase/migrations/`, then describe it
+in `worker/db/schema.ts`. Test it against a local Postgres in Docker (one-time
+setup in `test/db/setup.ts`):
 
 ```bash
-npx wrangler d1 migrations create splitr what_changed   # new file in migrations/
-npm run db:migrate:local
-npx wrangler d1 migrations apply splitr --remote        # when deploying
+DATABASE_URL=postgres://postgres:postgres@localhost:54329/postgres npm run test:db
 ```
 
-D1 has no transactions. Writes that must be all-or-nothing go in one
-`db.batch([...])`, which D1 runs as a single unit (see `worker/routes/expenses.ts`
-and `worker/sync.ts`).
+The whole request is one transaction: it commits when the handler returns and
+rolls back if it throws. A statement that fails leaves the transaction
+unusable, so expected conflicts are written as `ON CONFLICT DO NOTHING` and
+checked, not caught.
 
 ---
 
 ## Deploy
+
+Not yet set up for this fork: `wrangler.jsonc` still has a placeholder
+Hyperdrive id and the original custom domain.
 
 ```bash
 npm run deploy
 ```
 
 Secrets are set once with `npx wrangler secret put <NAME>` for each key in
-`.env.example`.
-
-The app is served only at `money.aditya24sharma.dev`; `workers_dev` and preview
-URLs are off in `wrangler.jsonc`, because they would skip the Access login.
+`.env.example`. `PLAID_TOKEN_KEY` encrypts stored Plaid tokens; changing it
+means every bank has to be relinked.
 
 ### Where it's hosted
 
-Everything runs on Cloudflare, on the **free plan**:
-
-- **Workers** runs the API and serves the built React app as static assets.
-- **D1** is the database (`splitr`).
-- **Access** puts a login in front of the whole site.
-- **DNS**: the domain `aditya24sharma.dev` lives in the same Cloudflare
-  account, so the custom domain needs no setup outside it.
-
-Free-plan limits worth knowing before adding things:
-
-- The Worker bundle (only `worker/`) must stay under 3 MB compressed, and each
-  request gets 10 ms of CPU time. Front-end packages in `src/` don't count
-  toward either; they ship as static files.
-- Static asset requests are free and unlimited; only `/api/*` calls count
-  toward the 100,000 Worker requests per day.
+- **Cloudflare Workers** runs the API and serves the built React app as static
+  assets. Free-plan limits: the Worker bundle (only `worker/`) must stay under
+  3 MB compressed, each request gets 10 ms of CPU time, and only `/api/*`
+  calls count toward the 100,000 Worker requests per day.
+- **Supabase** signs people in (email links, invite only) and holds the
+  Postgres database. The free plan pauses a project after 7 idle days.
+- **Hyperdrive** pools the Worker's connections to Postgres.
 
 ---
 
@@ -108,10 +108,12 @@ credit card payments), so a purchase isn't counted twice.
 ## Tests
 
 ```bash
-npm test
+npm test                                   # logic and UI
+DATABASE_URL=postgres://postgres:postgres@localhost:54329/postgres \
+  npm run test:db                          # API, sign-in and row security on Postgres
 ```
 
 ## Tech stack
 
 React 19 · Vite · TanStack Router · Tailwind CSS v4 · Hono · Drizzle ORM +
-Cloudflare D1 · Plaid (called with fetch) · Vitest
+Supabase (Auth, Postgres) · Hyperdrive · Plaid (called with fetch) · Vitest
