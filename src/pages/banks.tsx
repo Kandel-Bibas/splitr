@@ -9,6 +9,7 @@ import { PlaidLinkButton } from "@/components/PlaidLinkButton";
 import { formatUSD } from "@/lib/money";
 import { netBalance } from "@/lib/spending";
 import { lastSynced, timeAgo, type BankItem } from "@/lib/bank-types";
+import { apiFetch } from "../api";
 
 export default function BanksPage() {
   const { data, error: loadError } = useQuery(accountsQuery);
@@ -32,7 +33,7 @@ export default function BanksPage() {
   // One toast that reads "Syncing…" until the sync lands.
   function syncAfterLink(url: string, syncing: string, done: string, retry: string) {
     toast.loading(syncing, { id: "link" });
-    fetch(url, { method: "POST" })
+    apiFetch(url, { method: "POST" })
       .then((r) => r.json() as Promise<{ results?: SyncResult[] }>)
       .then((d) => {
         onSynced(d.results ?? []);
@@ -70,7 +71,7 @@ export default function BanksPage() {
           {/* ── Net balance + actions ───────────────────────────────────── */}
           {items.length > 0 && (
             <div className="rounded-3xl border border-ink bg-lavender px-6 pt-4 pb-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.08em]">Net balance</p>
+              <p className="text-sm font-semibold">Net balance</p>
               <p className="mt-1 font-display text-7xl sm:text-8xl tabular-nums leading-none">
                 {formatUSD(netBalance(allAccounts))}
               </p>
@@ -103,8 +104,7 @@ export default function BanksPage() {
               />
             ) : (
               <p className="text-sm rounded-2xl border border-ink bg-sun/40 px-4 py-2.5">
-                Plaid isn’t set up. Add your keys to <code className="font-mono">.env.local</code> (see{" "}
-                <code className="font-mono">.env.example</code>) and restart the app.
+                Bank linking isn’t set up yet: the app is missing its Plaid keys.
               </p>
             )}
             {items.length > 1 && (
@@ -166,7 +166,7 @@ function BankCard({
   async function unlink() {
     setBusy(true);
     try {
-      const res = await fetch(`/api/plaid/items/${item.id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/plaid/items/${item.id}`, { method: "DELETE" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `Error ${res.status}`);

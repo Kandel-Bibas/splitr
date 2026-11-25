@@ -1,16 +1,19 @@
-import { drizzle } from 'drizzle-orm/d1'
+import { drizzle } from 'drizzle-orm/postgres-js'
+import type { Sql } from 'postgres'
 import * as schema from './schema'
 
-/**
- * A Drizzle client over the D1 binding. Cheap to create: no engine, no
- * connection pool, so each request makes its own.
- *
- * D1 has no transactions. Writes that must be all-or-nothing go through
- * db.batch([...]), which D1 runs as one unit.
- */
-export function getDb(d1: D1Database) {
-  return drizzle(d1, { schema })
+/** A Drizzle client over a postgres.js connection; open a request with asUser. */
+export function connect(client: Sql) {
+  return drizzle(client, { schema })
 }
 
-export type Db = ReturnType<typeof getDb>
+/**
+ * One request's transaction, as the signed-in user (see asUser). Every query
+ * runs as them, so row security decides which rows it sees.
+ *
+ * The transaction commits when the handler returns and rolls back if it
+ * throws. A failed statement leaves the transaction unusable, so expected
+ * conflicts are written as ON CONFLICT DO NOTHING and checked, not caught.
+ */
+export type Db = Parameters<Parameters<ReturnType<typeof connect>['transaction']>[0]>[0]
 export { schema }

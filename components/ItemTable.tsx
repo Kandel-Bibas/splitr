@@ -17,6 +17,8 @@ export interface ItemRow {
   /** Dollars as string (e.g. "5.98") */
   lineTotal: string;
   assigneeIds: string[];
+  /** Returned after purchase (set by an order import) */
+  returned?: boolean;
 }
 
 interface Person {
@@ -33,6 +35,8 @@ interface ItemTableProps {
   /** Tax in dollars as a string */
   taxDollars: string;
   onTaxChange: (v: string) => void;
+  /** Read-only order charges shown under tax; zero amounts are left out */
+  charges?: { label: string; cents: number }[];
   onRowChange: (id: string, field: string, value: string) => void;
   onDeleteRow: (id: string) => void;
   onAddRow: () => void;
@@ -57,6 +61,7 @@ export function ItemTable({
   selectedRowIds,
   taxDollars,
   onTaxChange,
+  charges = [],
   onRowChange,
   onDeleteRow,
   onAddRow,
@@ -69,7 +74,8 @@ export function ItemTable({
     0
   );
   const tax = parseFloat(taxDollars) || 0;
-  const computedTotal = subtotal + tax;
+  const computedTotal =
+    subtotal + tax + charges.reduce((sum, c) => sum + c.cents, 0) / 100;
 
   const allSelected =
     rows.length > 0 && rows.every((r) => selectedRowIds.has(r.id));
@@ -122,6 +128,9 @@ export function ItemTable({
                 aria-label={`Row ${idx + 1} item name`}
                 className={`flex-1 min-w-0 px-3 font-semibold ${cellInput}`}
               />
+              {row.returned && (
+                <span className="shrink-0 text-sm text-ink-muted">Returned</span>
+              )}
               <button
                 type="button"
                 onClick={() => onDeleteRow(row.id)}
@@ -252,6 +261,15 @@ export function ItemTable({
             />
           </div>
         </div>
+
+        {charges
+          .filter((c) => c.cents !== 0)
+          .map((c) => (
+            <div key={c.label} className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-ink-muted shrink-0">{c.label}</span>
+              <span className="font-medium text-ink tabular-nums">{formatUSD(c.cents)}</span>
+            </div>
+          ))}
 
         <div className="flex items-baseline justify-between pt-2 border-t border-rim">
           <span className="text-sm font-semibold">Total</span>

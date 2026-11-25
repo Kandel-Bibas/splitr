@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button, type ButtonSize, type ButtonVariant } from "@/components/ui/Button";
+import { apiFetch } from "../src/api";
 
 export interface SyncResult {
   itemId: number;
@@ -47,7 +48,7 @@ export function SyncButton({
   async function sync() {
     setBusy(true);
     try {
-      const res = await fetch(itemId != null ? `/api/plaid/sync/${itemId}` : "/api/plaid/sync", { method: "POST" });
+      const res = await apiFetch(itemId != null ? `/api/plaid/sync/${itemId}` : "/api/plaid/sync", { method: "POST" });
       const data = (await res.json().catch(() => ({}))) as { results?: SyncResult[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? `Sync failed (HTTP ${res.status})`);
       const results = data.results ?? [];

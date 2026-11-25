@@ -1,0 +1,97 @@
+# Every pull request into main and every push to main runs the checks below.
+# A push to main deploys the Worker to splitr.bibas.dev, and only after every
+# check has passed. Supabase migrations are not applied here; apply them before
+# merging code that needs them.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer commit on a PR cancels the run still checking the old one. Runs on
+# main are never cancelled, so a deploy can't be cut off halfway.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Lint, typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  db:
+    name: Database tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:54329/postgres
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Start Supabase's Postgres image
+        run: |
+          docker run -d --name splitr-pg -p 127.0.0.1:54329:5432 \
+            -e POSTGRES_PASSWORD=postgres supabase/postgres:17.11.0.006
+          # The image's first-start setup only listens on its socket; TCP
+          # answering means the real server is up
+          for i in $(seq 1 90); do
+            if docker exec splitr-pg psql -U postgres -h 127.0.0.1 -tAc 'select 1' >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs splitr-pg
+          echo "Postgres did not start within 3 minutes" >&2
+          exit 1
+      - name: Install the hosted project's auth.uid()
+        run: docker exec -i splitr-pg psql -v ON_ERROR_STOP=1 -U supabase_admin -d postgres < test/db/auth-uid.sql
+      - run: npm ci
+      - run: npm run test:db
+
+  deploy:
+    name: Deploy to Cloudflare
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [check, db]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://splitr.bibas.dev
+    # Deploys run one at a time, in push order, and are never cancelled midway
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 29db88a3e77fe515a7242e7d0c5aa86c
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # The commit id in the message shows which commit is live in the
+      # Cloudflare dashboard
+      - run: npx wrangler deploy --message "$GITHUB_SHA"

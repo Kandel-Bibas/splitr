@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
 import { toast } from "sonner";
 import { Button, type ButtonSize, type ButtonVariant } from "@/components/ui/Button";
+import { apiFetch } from "../src/api";
 
 const LINK_TOKEN_KEY = "plaid:link_token";
 // Set when the stored token reconnects a bank rather than linking a new one
@@ -49,7 +50,7 @@ export function PlaidLinkButton({
       return;
     }
     let cancelled = false;
-    fetch(itemId != null ? `/api/plaid/link-token/${itemId}` : "/api/plaid/link-token", { method: "POST" })
+    apiFetch(itemId != null ? `/api/plaid/link-token/${itemId}` : "/api/plaid/link-token", { method: "POST" })
       .then((r) => r.json() as Promise<{ link_token?: string; error?: string }>)
       .then((d) => {
         if (cancelled) return;
@@ -81,7 +82,7 @@ export function PlaidLinkButton({
       setLinking(true);
       setError(null);
       try {
-        const res = await fetch("/api/plaid/exchange", {
+        const res = await apiFetch("/api/plaid/exchange", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ public_token: publicToken }),

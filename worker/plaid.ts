@@ -99,20 +99,26 @@ export interface PlaidTransaction {
 // Endpoints
 // ---------------------------------------------------------------------------
 
-export const PLAID_USER_ID = 'local-user'
-
 function listEnv(name: string, fallback: string): string[] {
   return (process.env[name] ?? fallback).split(',').map(v => v.trim())
 }
 
 export const plaid = {
   /** With an access token, Link opens in update mode to sign back in to that bank. */
-  linkTokenCreate: (redirectUri?: string, accessToken?: string) =>
+  /** userId: the signed-in Supabase user, Plaid's stable id for the person linking. */
+  linkTokenCreate: (userId: string, redirectUri?: string, accessToken?: string) =>
     call<{ link_token: string }>('/link/token/create', {
       client_name: 'Splitr',
       language: 'en',
-      user: { client_user_id: PLAID_USER_ID },
-      ...(accessToken ? { access_token: accessToken } : { products: listEnv('PLAID_PRODUCTS', 'transactions') }),
+      user: { client_user_id: userId },
+      ...(accessToken
+        ? { access_token: accessToken }
+        : {
+            products: listEnv('PLAID_PRODUCTS', 'transactions'),
+            // Plaid's most history (24 months; it defaults to 90 days). Fixed
+            // when a bank is linked: an already-linked bank must be relinked to get more
+            transactions: { days_requested: 730 },
+          }),
       country_codes: listEnv('PLAID_COUNTRY_CODES', 'US'),
       ...(redirectUri && { redirect_uri: redirectUri }),
     }),

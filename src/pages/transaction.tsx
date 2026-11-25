@@ -15,6 +15,7 @@ import { formatUSD } from "@/lib/money";
 import { ALL_CATEGORIES, isMoneyMoving, isSpending, yourShare } from "@/lib/spending";
 import { txLabel } from "@/lib/transactions";
 import { accountLabel, indexAccounts } from "@/lib/bank-types";
+import { apiFetch } from "../api";
 
 interface Person {
   id: string;
@@ -73,7 +74,7 @@ export default function TransactionPage() {
     const key = transactionQuery(id).queryKey;
     client.setQueryData(key, { ...tx, categoryPrimary: next, categoryDetailed: null }); // optimistic
     try {
-      const res = await fetch(`/api/transactions/${id}`, {
+      const res = await apiFetch(`/api/transactions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ categoryPrimary: next }),
@@ -90,7 +91,7 @@ export default function TransactionPage() {
   async function handleDelete() {
     setDeleting(true);
     try {
-      const res = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/transactions/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `Error ${res.status}`);
@@ -137,7 +138,7 @@ export default function TransactionPage() {
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <header>
-        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-ink-muted">
+        <p className="flex items-center gap-2 text-sm font-semibold text-ink-muted">
           <BankLogo item={account?.item} size="sm" />
           {longDate(tx.date)} · {tx.source === "MANUAL" ? "Added by hand" : accountLabel(account)}
         </p>
@@ -181,6 +182,11 @@ export default function TransactionPage() {
                 <p className="font-display text-5xl tabular-nums leading-none mt-1">
                   {formatUSD(tx.split.owedBackCents)}
                 </p>
+                {tx.split.chargeCount > 1 && (
+                  <p className="mt-1 text-sm text-ink-muted">
+                    One of {tx.split.chargeCount} charges on this split. This is this charge’s part of what comes back.
+                  </p>
+                )}
                 <p className="mt-2 text-sm">
                   Your share <span className="font-semibold tabular-nums">{formatUSD(share ?? 0)}</span>
                   {" · "}
@@ -208,7 +214,7 @@ export default function TransactionPage() {
                 })}
               </div>
             )}
-            {split && split.totalCents !== tx.amount && (
+            {split && tx.split.chargeCount === 1 && split.totalCents !== tx.amount && (
               <p className="mt-3 text-xs text-ink-muted">
                 The split totals {formatUSD(split.totalCents)}; the charge was {formatUSD(tx.amount)}.
               </p>

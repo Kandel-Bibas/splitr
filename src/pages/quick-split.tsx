@@ -13,6 +13,7 @@ import { splitSimpleEven, splitSimpleExact } from "@/lib/split";
 import { expenseDay } from "@/lib/expense-filter";
 import { txLabel, type TxView } from "@/lib/transactions";
 import { loadExpenseToEdit, loadSourceTx, peopleQuery, queryClient, useRefreshAll } from "../queries";
+import { apiFetch } from "../api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -279,7 +280,7 @@ export default function NewSimplePage() {
     };
 
     try {
-      const res = await fetch(editId ? `/api/expenses/${editId}` : "/api/expenses", {
+      const res = await apiFetch(editId ? `/api/expenses/${editId}` : "/api/expenses", {
         method: editId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -367,7 +368,7 @@ export default function NewSimplePage() {
         htmlFor="amount-input"
         className="block rounded-3xl border border-ink bg-sky px-6 pt-4 pb-5 focus-within:ring-4 focus-within:ring-sun"
       >
-        <span className="text-xs font-semibold uppercase tracking-[0.08em]">Total</span>
+        <span className="text-sm font-semibold">Total</span>
         <span className="mt-1 flex items-baseline gap-1 font-display text-6xl sm:text-7xl">
           <span aria-hidden="true">$</span>
           <input

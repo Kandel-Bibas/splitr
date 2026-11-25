@@ -5,8 +5,12 @@ export interface BreakdownExpense {
   splitMethod: 'EVEN' | 'EXACT' | 'ITEMIZED'
   payerId: string
   taxCents: number
+  /** Itemized only: tip + fees, discounts (<= 0), refunds (<= 0); see lib/split.ts */
+  tipFeesCents: number
+  discountCents: number
+  refundCents: number
   totalCents: number
-  items: { id: string; lineTotalCents: number; assignments: { personId: string }[] }[]
+  items: { id: string; lineTotalCents: number; returned: boolean; assignments: { personId: string }[] }[]
   participants: { personId: string; exactAmountCents: number | null }[]
 }
 
@@ -27,8 +31,12 @@ export function computeBreakdown(e: BreakdownExpense): Breakdown {
         id: i.id,
         lineTotalCents: i.lineTotalCents,
         assigneeIds: i.assignments.map(a => a.personId),
+        returned: i.returned,
       })),
       taxCents: e.taxCents,
+      tipFeesCents: e.tipFeesCents,
+      discountCents: e.discountCents,
+      refundCents: e.refundCents,
     })
     perPerson = result.perPerson
   } else if (e.splitMethod === 'EVEN') {

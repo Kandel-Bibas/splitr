@@ -11,11 +11,11 @@ describe('computeBreakdown', () => {
       type: 'ITEMIZED',
       splitMethod: 'ITEMIZED',
       payerId: 'personA',
-      taxCents: 150,
+      taxCents: 150, tipFeesCents: 0, discountCents: 0, refundCents: 0,
       totalCents: 1650,
       items: [
-        { id: 'item1', lineTotalCents: 1000, assignments: [{ personId: 'personA' }] },
-        { id: 'item2', lineTotalCents: 500, assignments: [{ personId: 'personB' }] },
+        { id: 'item1', lineTotalCents: 1000, returned: false, assignments: [{ personId: 'personA' }] },
+        { id: 'item2', lineTotalCents: 500, returned: false, assignments: [{ personId: 'personB' }] },
       ],
       participants: [],
     }
@@ -32,7 +32,7 @@ describe('computeBreakdown', () => {
       type: 'SIMPLE',
       splitMethod: 'EVEN',
       payerId: 'personA',
-      taxCents: 0,
+      taxCents: 0, tipFeesCents: 0, discountCents: 0, refundCents: 0,
       totalCents: 10000,
       items: [],
       participants: [
@@ -58,7 +58,7 @@ describe('computeBreakdown', () => {
       type: 'SIMPLE',
       splitMethod: 'EXACT',
       payerId: 'personA',
-      taxCents: 0,
+      taxCents: 0, tipFeesCents: 0, discountCents: 0, refundCents: 0,
       totalCents: 5000,
       items: [],
       participants: [
@@ -74,7 +74,7 @@ describe('computeBreakdown', () => {
 
   it('SIMPLE EXACT throws when a participant is missing an amount', () => {
     expect(() => computeBreakdown({
-      type: 'SIMPLE', splitMethod: 'EXACT', payerId: 'A', taxCents: 0, totalCents: 5000,
+      type: 'SIMPLE', splitMethod: 'EXACT', payerId: 'A', taxCents: 0, tipFeesCents: 0, discountCents: 0, refundCents: 0, totalCents: 5000,
       items: [],
       participants: [
         { personId: 'A', exactAmountCents: 5000 },
@@ -88,7 +88,7 @@ describe('computeBreakdown', () => {
       type: 'SIMPLE',
       splitMethod: 'EXACT',
       payerId: 'personA',
-      taxCents: 0,
+      taxCents: 0, tipFeesCents: 0, discountCents: 0, refundCents: 0,
       totalCents: 5000,
       items: [],
       participants: [

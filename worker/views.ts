@@ -1,11 +1,18 @@
 import { asc } from 'drizzle-orm'
 import { computeBreakdown, type Breakdown } from '@/lib/expense-breakdown'
-import type { TxView } from '@/lib/transactions'
+import { chargeShares, type TxView } from '@/lib/transactions'
 import type { Db } from './db'
 import { item } from './db/schema'
 
 // Row loading and JSON shapes shared by the API routes. The shapes match what
 // the API returned when it ran on Prisma, which the pages depend on.
+
+const INT4_MAX = 2_147_483_647
+
+/** Whether a request value fits a Postgres integer column; anything else would fail the statement. */
+export function isInt4(value: unknown): value is number {
+  return Number.isInteger(value) && Math.abs(value as number) <= INT4_MAX
+}
 
 // ---------------------------------------------------------------------------
 // Splits
@@ -21,9 +28,9 @@ export const EXPENSE_WITH = {
 
 type ExpenseRow = NonNullable<Awaited<ReturnType<typeof findExpense>>>
 
-export function findExpense(db: Db, id: string) {
+export function findExpense(db: Db, ownerId: string, id: string) {
   return db.query.expense.findFirst({
-    where: (e, { eq }) => eq(e.id, id),
+    where: (e, { and, eq }) => and(eq(e.id, id), eq(e.ownerId, ownerId)),
     with: EXPENSE_WITH,
   })
 }
@@ -38,8 +45,11 @@ type BreakdownSource = {
   splitMethod: 'EVEN' | 'EXACT' | 'ITEMIZED'
   payerId: string
   taxCents: number
+  tipFeesCents: number
+  discountCents: number
+  refundCents: number
   totalCents: number
-  items: { id: string; lineTotalCents: number; assignments: { personId: string }[] }[]
+  items: { id: string; lineTotalCents: number; returned: boolean; assignments: { personId: string }[] }[]
   participants: { personId: string; exactAmountCents: number | null }[]
 }
 
@@ -49,10 +59,14 @@ export function breakdownOf(e: BreakdownSource): Breakdown {
     splitMethod: e.splitMethod,
     payerId: e.payerId,
     taxCents: e.taxCents,
+    tipFeesCents: e.tipFeesCents,
+    discountCents: e.discountCents,
+    refundCents: e.refundCents,
     totalCents: e.totalCents,
     items: e.items.map((i) => ({
       id: i.id,
       lineTotalCents: i.lineTotalCents,
+      returned: i.returned,
       assignments: i.assignments.map((a) => ({ personId: a.personId })),
     })),
     participants: e.participants.map((p) => ({ personId: p.personId, exactAmountCents: p.exactAmountCents })),
@@ -63,16 +77,22 @@ export function breakdownOf(e: BreakdownSource): Breakdown {
 // Transactions
 // ---------------------------------------------------------------------------
 
-/** What txView needs to describe a linked split. */
+/** What txView needs to describe a linked split, and its share of it. */
 export const TX_WITH = {
-  expense: { with: { items: { with: { assignments: true } }, participants: true } },
+  expense: {
+    with: {
+      items: { with: { assignments: true } },
+      participants: true,
+      charges: { columns: { id: true, amount: true } },
+    },
+  },
 } as const
 
 type TxRow = NonNullable<Awaited<ReturnType<typeof findTx>>>
 
-export function findTx(db: Db, id: number) {
+export function findTx(db: Db, ownerId: string, id: number) {
   return db.query.transaction.findFirst({
-    where: (t, { eq }) => eq(t.id, id),
+    where: (t, { and, eq }) => and(eq(t.id, id), eq(t.ownerId, ownerId)),
     with: TX_WITH,
   })
 }
@@ -82,10 +102,12 @@ export function txView(tx: TxRow): TxView {
   let split: TxView['split'] = null
   if (tx.expense) {
     const breakdown = breakdownOf(tx.expense)
+    const owedBackCents = breakdown.owes.reduce((s, o) => s + o.cents, 0)
     split = {
       expenseId: tx.expense.id,
       ways: breakdown.perPerson.length,
-      owedBackCents: breakdown.owes.reduce((s, o) => s + o.cents, 0),
+      owedBackCents: chargeShares(owedBackCents, tx.expense.charges).get(tx.id) ?? 0,
+      chargeCount: tx.expense.charges.length,
       logged: tx.expense.loggedToSplitwise,
     }
   }

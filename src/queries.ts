@@ -1,4 +1,5 @@
 import { QueryClient, queryOptions, useQueryClient } from "@tanstack/react-query";
+import { apiFetch } from "./api";
 import type { AccountsResponse } from "@/lib/bank-types";
 import type { TxView } from "@/lib/transactions";
 
@@ -27,7 +28,7 @@ export class ApiError extends Error {
 
 /** GETs JSON, throwing "Failed to load <what> (HTTP <status>)" on an error status. */
 async function getJson<T>(url: string, what: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new ApiError(res.status, `Failed to load ${what} (HTTP ${res.status})`);
   return res.json() as Promise<T>;
 }

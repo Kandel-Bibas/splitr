@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "@/components/Link";
 import { useRouterState } from "@tanstack/react-router";
+import { signOut, useSession } from "../src/auth";
 
 // Each section also owns the detail pages under these prefixes
 const NAV_LINKS = [
@@ -139,8 +140,68 @@ export default function AppNav() {
           <span aria-hidden="true" className="text-base leading-none">+</span>
           <span>New</span>
         </Link>
+
+        <AccountMenu />
       </div>
     </header>
+  );
+}
+
+/**
+ * Who is signed in, and Sign out, behind one round button with their initial:
+ * the bar has no room to show an email beside the sections and New.
+ */
+function AccountMenu() {
+  const email = useSession().user.email ?? "";
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !rootRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Account: ${email}`}
+        className="h-9 w-9 rounded-full border border-ink bg-surface text-sm font-semibold text-ink hover:bg-mist transition-colors"
+      >
+        {(email[0] ?? "?").toUpperCase()}
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-11 z-50 w-64 rounded-2xl border border-ink bg-surface p-2"
+        >
+          <p className="px-3 py-2 text-sm text-ink-muted truncate" title={email}>
+            {email}
+          </p>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void signOut()}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-ink hover:bg-mist transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
